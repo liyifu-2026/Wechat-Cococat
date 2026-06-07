@@ -1,0 +1,75 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+dist-ssr/
+dist-rc/
+*.tsbuildinfo
+.turbo
+
+# Compiled TS artifacts in src (should not be committed)
+packages/*/src/**/*.js
+packages/*/src/**/*.js.map
+packages/*/src/**/*.d.ts
+packages/*/src/**/*.d.ts.map
+
+# Rust
+**/target/
+packages/agent-server-rust/bindings/
+
+# Tauri (llm_wiki)
+src-tauri/gen/
+
+# Docker build artifacts
+docker/wechat.deb
+docker/*.partial
+docker/cache/
+docker/agent-server/
+docker/shared/
+
+# Docs build
+docs/.astro
+docs/public/og-image.png
+docs/public/og/
+
+# Local data & caches
+.data
+wechat_files/
+
+# Environment & secrets
+.env
+.env.local
+.env.*.local
+.envrc
+
+# Editor & OS
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+Thumbs.db
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Logs & debug
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+__pycache__/
+*.pyc
+screenshot.png
+
+# Local-only tooling
+.claude/
+.superpowers/
+AGENTS.md
+
+# Internal docs (llm_wiki, not shipped)
+llm_wiki/docs/
+llm_wiki/tests/

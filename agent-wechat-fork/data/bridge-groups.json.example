@@ -1,0 +1,10 @@
+{
+  "*": {
+    "requireMention": true,
+    "replyWithMention": true
+  },
+  "12345@chatroom": {
+    "requireMention": true,
+    "replyWithMention": "all"
+  }
+}
