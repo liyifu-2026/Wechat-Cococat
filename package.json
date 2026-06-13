@@ -1,0 +1,38 @@
+{
+  "name": "cococat-monorepo",
+  "version": "0.5.0",
+  "private": true,
+  "description": "CocoCat — WeChat AI companion (Driver + Agent + Wiki + Memory)",
+  "type": "module",
+  "scripts": {
+    "migrate": "bash scripts/cococat-migrate-config.sh",
+    "stack": "bash scripts/cococat-stack.sh",
+    "stack:status": "bash scripts/cococat-stack.sh status all",
+    "build": "turbo run build",
+    "typecheck": "turbo run typecheck",
+    "build:image": "bash scripts/build-images-local.sh",
+    "build:image:amd64": "bash scripts/build-images-local.sh --arch amd64",
+    "build:image:arm64": "bash scripts/build-images-local.sh --arch arm64",
+    "agent:build": "pnpm --filter @cococat/shared build && pnpm --filter @cococat/agent build",
+    "agent": "pnpm --filter @cococat/agent start",
+    "agent:reconcile": "pnpm --filter @cococat/agent start reconcile-transcript",
+    "cli": "node packages/cli/dist/cli.js",
+    "dev": "bash scripts/dev.sh",
+    "driver:up": "bash scripts/cococat-stack.sh start driver",
+    "driver:down": "bash scripts/cococat-stack.sh stop driver",
+    "console:dev": "bash scripts/console-dev.sh",
+    "console:build": "pnpm --filter @cococat/console build",
+    "console:bundle": "pnpm --filter @cococat/console tauri build",
+    "generate-types": "bash scripts/generate-types.sh"
+  },
+  "devDependencies": {
+    "@changesets/changelog-github": "^0.5.2",
+    "@changesets/cli": "^2.29.8",
+    "turbo": "^2.4.4",
+    "typescript": "^5.4.5"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "packageManager": "pnpm@9.15.4"
+}

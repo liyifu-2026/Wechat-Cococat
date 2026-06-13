@@ -1,0 +1,87 @@
+---
+title: Quick Start
+description: Get CocoCat Driver running in under 5 minutes.
+---
+
+The fastest way to get started is with the CLI. For the full CocoCat stack (Agent + Console), see [Pi Agent Setup](/integrations/pi/setup).
+
+:::note[Prerequisites]
+You need **Docker** running on your machine. On macOS, install [Colima](https://github.com/abiosoft/colima) (`brew install colima && colima start`) or [Docker Desktop](https://www.docker.com/products/docker-desktop/). On Linux, install [Docker Engine](https://docs.docker.com/engine/install/).
+:::
+
+## 1. Install the CLI
+
+From the monorepo:
+
+```bash
+pnpm install
+pnpm --filter @cococat/cli build
+```
+
+Or globally: `npm install -g @cococat/cli`
+
+## 2. Start the Driver
+
+```bash
+pnpm build:image    # local fork — build once
+wx up               # or: pnpm stack start driver
+```
+
+Token and data dirs are created under `~/.config/cococat/` and `~/.local/share/cococat/`.
+
+Upgrading from `agent-wechat`? Run **`pnpm migrate`** first.
+
+## 3. Log in to WeChat
+
+```bash
+wx auth login
+```
+
+A QR code is displayed in your terminal. Scan it with WeChat on your phone (tap **+** > **Scan**), then confirm the login.
+
+:::tip
+Or use CocoCat Console **WeChat** module or VNC at `http://localhost:6174/vnc/`.
+:::
+
+## 4. Interact with WeChat
+
+```bash
+# List your chats
+wx chats list
+
+# Find a chat by name
+wx chats find "John"
+
+# Send a message (--text, --image, or --file)
+wx messages send <chatId> --text "Hello from CocoCat!"
+wx messages send <chatId> --image photo.jpg
+wx messages send <chatId> --file document.pdf
+
+# Read messages
+wx messages list <chatId>
+
+# Download media (images, voice, video) from a message
+wx messages media <chatId> <messageId>
+```
+
+## 5. View the container via VNC
+
+Open your browser to `http://localhost:6174/vnc/`. Auth token:
+
+```bash
+cat ~/.config/cococat/token
+```
+
+## 6. Stop the container
+
+```bash
+wx down
+```
+
+## Next steps
+
+- [Pi Agent setup](/integrations/pi/setup) — `pnpm agent` for auto-reply
+- [CocoCat Console](/integrations/pi/setup) — `pnpm console:dev` for Wiki + stack control
+- [Wechaty integration](/integrations/wechaty/puppet-setup) — connect existing Wechaty bots
+- [CLI commands reference](/getting-started/cli/commands) — full `wx` command list
+- [Docker Compose setup](/getting-started/container-setup/docker-compose) — production deployments

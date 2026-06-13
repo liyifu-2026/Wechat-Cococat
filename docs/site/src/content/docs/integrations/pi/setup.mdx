@@ -1,0 +1,96 @@
+---
+title: Pi Agent Setup
+description: Run WeChat auto-reply with CocoCat Agent (pi-agent-core) on the host.
+---
+
+CocoCat uses [**pi**](https://github.com/earendil-works/pi) (`@earendil-works/pi-agent-core`) as the Agent runtime. The Docker container is the **CocoCat Driver** only — no LLM inside the container.
+
+## Architecture
+
+```
+Host: pnpm agent  (@cococat/agent — pi + WeChat tools)
+         ↕  WS /api/ws/events + REST
+Container: agent-wechat  (Driver — FSM + DB + UI)
+         ↕
+WeChat desktop
+```
+
+## 1. Clone and install
+
+```bash
+git clone <this-repo> Wechat-Cococat
+cd Wechat-Cococat
+pnpm install
+```
+
+From an old `agent-wechat` install, run **`pnpm migrate`** once to copy config into `~/.config/cococat/`.
+
+## 2. Start the Driver
+
+```bash
+pnpm build:image
+pnpm stack start driver
+# or: pnpm cli up
+```
+
+Log in to WeChat (QR via `wx login`, CocoCat Console **WeChat** module, or VNC at `http://localhost:6174/vnc/`).
+
+## 3. Configure auth
+
+Token is auto-created on first `wx up` or stack start:
+
+```bash
+mkdir -p ~/.config/cococat
+openssl rand -hex 32 > ~/.config/cococat/token
+chmod 600 ~/.config/cococat/token
+```
+
+## 4. Configure LLM
+
+Edit `~/.config/cococat/agent.env` or export provider keys (see [pi-ai docs](https://github.com/earendil-works/pi/tree/main/packages/ai)):
+
+```bash
+export ANTHROPIC_API_KEY=...
+export PI_PROVIDER=anthropic
+export PI_MODEL=claude-sonnet-4-20250514
+```
+
+## 5. Run CocoCat Agent
+
+```bash
+pnpm agent:build
+pnpm agent
+# or start everything from Console: pnpm console:dev → Stack panel
+```
+
+## Environment variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `AGENT_WECHAT_URL` | `http://localhost:6174` | Driver URL |
+| `AGENT_WECHAT_TOKEN` | token file | Bearer token |
+| `PI_PROVIDER` | `anthropic` | pi-ai provider |
+| `PI_MODEL` | `claude-sonnet-4-20250514` | Model id |
+| `WECHAT_PI_SYSTEM_PROMPT` | — | Custom system prompt |
+| `WECHAT_PI_POLL_MS` | `30000` | REST poll fallback interval |
+
+## Agent tools
+
+The pi Agent receives WeChat-specific tools:
+
+- `wechat_send_message` — send a reply
+- `wechat_list_messages` — read chat history
+- `wechat_list_chats` — list conversations
+- `wechat_auth_status` — check login state
+
+## CocoCat Wiki (optional)
+
+Run **CocoCat Console** (`pnpm console:dev`) — the Wiki module serves HTTP API on `:19828`. Agent tools can search/read projects per chat via `wiki.json` mapping. See [CONTEXT.md](https://github.com/thisnick/agent-wechat/blob/main/CONTEXT.md) in the monorepo root.
+
+## CocoCat Memory (optional)
+
+```bash
+pnpm stack start memory
+```
+
+Configure `~/.config/cococat/memory.env`. Agent uses `TDAI_GATEWAY_URL=http://127.0.0.1:8420` for recall/capture.

@@ -1,0 +1,20 @@
+# CocoCat — dunst 1.5.x (Debian bookworm image).
+# Dunst 1.5 does NOT support notification_sound; apps play their own audio.
+# Mute desktop notify beeps via PulseAudio null sink in entrypoint.sh instead.
+[global]
+    font = Noto Sans CJK SC 10
+    markup = full
+    format = "%s\n%b"
+    sort = yes
+    indicate_hidden = yes
+    idle_threshold = 0
+    always_run_script = false
+
+[urgency_low]
+    timeout = 5
+
+[urgency_normal]
+    timeout = 8
+
+[urgency_critical]
+    timeout = 0

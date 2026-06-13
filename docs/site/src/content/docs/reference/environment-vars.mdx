@@ -1,0 +1,56 @@
+---
+title: Environment Variables
+description: Environment variables for the channel driver and CocoCat Agent.
+---
+
+## Client-side (CLI, Agent, Wechaty)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `AGENT_WECHAT_URL` | `http://localhost:6174` | Channel driver URL |
+| `AGENT_WECHAT_TOKEN` | token file | Auth token (overrides `~/.config/cococat/token`) |
+| `COCOCAT_CONFIG_DIR` | `~/.config/cococat` | Config root |
+| `COCOCAT_DATA_DIR` | `~/.local/share/cococat` | Data root (chats, memory, docker bind mounts) |
+| `AGENT_WECHAT_DATA_ROOT` | cococat data dir | Override Docker volume host paths |
+
+## CocoCat Agent (host)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PI_PROVIDER` | `anthropic` | pi-ai provider id |
+| `PI_MODEL` | `claude-sonnet-4-20250514` | Model id |
+| `WECHAT_PI_SYSTEM_PROMPT` | — | Override system prompt |
+| `WECHAT_PI_POLL_MS` | `30000` | REST poll fallback interval (ms) |
+| `TDAI_GATEWAY_URL` | — | CocoCat Memory sidecar URL |
+| `TDAI_MEMORY_ENABLED` | `true` | Enable recall/capture |
+| `WIKI_ENABLED` | — | Enable wiki tools |
+| `WIKI_API_URL` | `http://127.0.0.1:19828` | Wiki API base URL |
+
+LLM API keys follow [pi-ai conventions](https://github.com/earendil-works/pi/tree/main/packages/ai) (e.g. `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`).
+
+Agent env file: `~/.config/cococat/agent.env` · Memory: `~/.config/cococat/memory.env`
+
+See [Pi Agent Setup](/integrations/pi/setup).
+
+## Server-side (inside the container)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `AGENT_DB_PATH` | `/data/agent.db` | Agent SQLite database path |
+| `AGENT_PORT` | `6174` | HTTP listen port |
+| `PROXY` | — | Transparent proxy |
+| `DISPLAY` | `:99` | X11 display (set by entrypoint) |
+| `DBUS_SESSION_BUS_ADDRESS` | — | D-Bus address (set by entrypoint) |
+
+The container does **not** accept LLM or Bridge environment variables.
+
+## File paths (inside the container)
+
+| Path | Description |
+|------|-------------|
+| `/data/auth-token` | Auth token file (read-only mount) |
+| `/data/agent.db` | Agent SQLite database |
+| `/home/wechat/` | WeChat user home directory |
+| `/opt/agent-server/agent-server` | Agent server binary |
+| `/opt/tools/` | Tool scripts (screenshot, click, input, etc.) |
+| `/opt/novnc/` | noVNC web viewer |

@@ -1,0 +1,812 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>CocoCat Console UI Mockup v1</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg: #fafafa;
+      --fg: #1a1a1a;
+      --muted: #f4f4f5;
+      --muted-fg: #71717a;
+      --card: #fff;
+      --border: #e4e4e7;
+      --accent: #f0f0f0;
+      --accent-fg: #1a1a1a;
+      --destructive: #b91c1c;
+      --up: #16a34a;
+      --degraded: #ca8a04;
+      --down: #dc2626;
+      --radius: 6px;
+      --rail: 48px;
+    }
+    body {
+      font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+      background: #ececec;
+      color: var(--fg);
+      min-height: 100vh;
+      padding: 16px;
+    }
+    .banner {
+      max-width: 1280px;
+      margin: 0 auto 12px;
+      padding: 10px 14px;
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      font-size: 13px;
+      color: var(--muted-fg);
+    }
+    .banner strong { color: var(--fg); }
+    .app {
+      max-width: 1280px;
+      margin: 0 auto;
+      height: calc(100vh - 80px);
+      min-height: 640px;
+      display: flex;
+      gap: 8px;
+      background: var(--bg);
+      padding: 8px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+    }
+    .rail {
+      width: var(--rail);
+      flex-shrink: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 8px 0;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      gap: 4px;
+    }
+    .logo {
+      width: 32px; height: 32px;
+      border-radius: 22%;
+      background: linear-gradient(135deg, #fcd34d, #f97316);
+      margin-bottom: 8px;
+      display: grid; place-items: center;
+      font-size: 18px;
+    }
+    .rail-btn {
+      position: relative;
+      width: 40px; height: 40px;
+      border: none; background: transparent;
+      border-radius: var(--radius);
+      cursor: pointer;
+      color: var(--muted-fg);
+      font-size: 18px;
+      display: grid; place-items: center;
+    }
+    .rail-btn:hover { background: var(--accent); color: var(--accent-fg); }
+    .rail-btn.active { background: var(--accent); color: var(--accent-fg); }
+    .rail-spacer { flex: 1; }
+    .dot {
+      position: absolute; right: 4px; top: 4px;
+      width: 8px; height: 8px; border-radius: 50%;
+      border: 1.5px solid var(--card);
+    }
+    .dot.up { background: var(--up); }
+    .dot.degraded { background: var(--degraded); }
+    .dot.down { background: var(--down); }
+    .main {
+      flex: 1;
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+    }
+    .page-header {
+      padding: 16px 20px 0;
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+      flex-shrink: 0;
+    }
+    .page-header h1 { font-size: 20px; font-weight: 600; }
+    .page-header p { font-size: 13px; color: var(--muted-fg); margin-top: 4px; }
+    .actions { display: flex; gap: 8px; flex-wrap: wrap; }
+    .btn {
+      height: 32px; padding: 0 12px;
+      border-radius: var(--radius);
+      border: 1px solid var(--border);
+      background: var(--card);
+      font-size: 13px;
+      cursor: pointer;
+      color: var(--fg);
+    }
+    .btn:hover { background: var(--muted); }
+    .btn.primary { background: var(--fg); color: #fff; border-color: var(--fg); }
+    .btn.destructive { color: var(--destructive); border-color: #fecaca; }
+    .tabs {
+      display: flex;
+      gap: 0;
+      padding: 12px 20px 0;
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+    .tab {
+      padding: 8px 14px;
+      font-size: 13px;
+      border: none;
+      background: none;
+      cursor: pointer;
+      color: var(--muted-fg);
+      border-bottom: 2px solid transparent;
+      margin-bottom: -1px;
+    }
+    .tab:hover { color: var(--fg); }
+    .tab.active { color: var(--fg); border-bottom-color: var(--fg); font-weight: 500; }
+    .page-body {
+      flex: 1;
+      min-height: 0;
+      overflow: auto;
+      padding: 16px 20px 20px;
+    }
+    .panel {
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--card);
+      padding: 16px;
+    }
+    .panel.muted { background: var(--muted); }
+    .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+    .grid-2 { display: grid; grid-template-columns: 1fr 2fr; gap: 12px; min-height: 280px; }
+    .card-title { font-weight: 500; font-size: 14px; margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center; }
+    .badge {
+      font-size: 11px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--border);
+    }
+    .badge.up { color: var(--up); }
+    .badge.down { color: var(--down); }
+    .badge.degraded { color: var(--degraded); }
+    .hint {
+      font-size: 12px; padding: 10px 12px;
+      background: var(--muted);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      color: var(--muted-fg);
+      margin-bottom: 12px;
+    }
+    .hint.warn { border-color: #fde68a; background: #fffbeb; color: #92400e; }
+    .vnc {
+      height: 100%;
+      min-height: 360px;
+      background: #111;
+      border-radius: var(--radius);
+      display: grid; place-items: center;
+      color: #666;
+      font-size: 14px;
+      border: 1px solid var(--border);
+    }
+    .log {
+      font-family: ui-monospace, monospace;
+      font-size: 11px;
+      color: var(--muted-fg);
+      white-space: pre-wrap;
+      max-height: 200px;
+      overflow: auto;
+    }
+    .settings-layout {
+      display: grid;
+      grid-template-columns: 180px 1fr;
+      gap: 16px;
+      min-height: 400px;
+    }
+    .settings-nav button {
+      display: block; width: 100%; text-align: left;
+      padding: 8px 10px; margin-bottom: 4px;
+      border: none; background: none; border-radius: var(--radius);
+      font-size: 13px; cursor: pointer; color: var(--muted-fg);
+    }
+    .settings-nav button:hover { background: var(--muted); color: var(--fg); }
+    .settings-nav button.active { background: var(--accent); color: var(--fg); font-weight: 500; }
+    .settings-group-label {
+      font-size: 11px; text-transform: uppercase; letter-spacing: .04em;
+      color: var(--muted-fg); padding: 8px 10px 4px; margin-top: 8px;
+    }
+    .wiki-layout {
+      display: grid;
+      grid-template-columns: 200px 1fr;
+      gap: 12px;
+      min-height: 400px;
+    }
+    .tree { font-size: 12px; line-height: 1.8; color: var(--muted-fg); }
+    .tree .sel { color: var(--fg); font-weight: 500; }
+    .field { margin-bottom: 12px; }
+    .field label { display: block; font-size: 12px; color: var(--muted-fg); margin-bottom: 4px; }
+    .field input, .field textarea {
+      width: 100%; padding: 8px 10px; border: 1px solid var(--border);
+      border-radius: var(--radius); font-size: 13px;
+    }
+    .field textarea { min-height: 120px; resize: vertical; font-family: inherit; }
+    .sticky-footer {
+      position: sticky; bottom: 0;
+      padding: 12px 0 0;
+      border-top: 1px solid var(--border);
+      margin-top: 12px;
+      background: var(--card);
+      display: flex; gap: 8px;
+    }
+    .hidden { display: none !important; }
+    .module-view { display: none; height: 100%; flex-direction: column; }
+    .module-view.active { display: flex; }
+    .sub-view { display: none; }
+    .sub-view.active { display: block; }
+    .sub-view.flex.active { display: flex; flex-direction: column; height: 100%; }
+    .project-picker {
+      font-size: 13px; font-weight: 500;
+      padding: 6px 10px; border: 1px solid var(--border);
+      border-radius: var(--radius); background: var(--muted);
+      cursor: pointer;
+    }
+    /* WeChat-style 会话 */
+    .page-body.flush { padding: 0; }
+    .wx-shell {
+      display: flex;
+      height: calc(100vh - 220px);
+      min-height: 420px;
+      border: 1px solid #d6d6d6;
+      border-radius: var(--radius);
+      overflow: hidden;
+      background: #f5f5f5;
+    }
+    .wx-list {
+      width: 280px;
+      flex-shrink: 0;
+      background: #e8e8e8;
+      border-right: 1px solid #d6d6d6;
+      display: flex;
+      flex-direction: column;
+    }
+    .wx-search {
+      padding: 12px;
+      background: #f7f7f7;
+      border-bottom: 1px solid #d6d6d6;
+    }
+    .wx-search input {
+      width: 100%;
+      border: none;
+      background: #e2e2e2;
+      border-radius: 4px;
+      padding: 6px 10px;
+      font-size: 12px;
+      color: #888;
+    }
+    .wx-items { flex: 1; overflow: auto; }
+    .wx-item {
+      display: flex;
+      gap: 10px;
+      padding: 12px;
+      cursor: pointer;
+      border-bottom: 1px solid #dcdcdc;
+    }
+    .wx-item:hover { background: #d9d9d9; }
+    .wx-item.active { background: #c8c8c8; }
+    .wx-avatar {
+      width: 40px; height: 40px;
+      border-radius: 4px;
+      background: #07c160;
+      color: #fff;
+      font-size: 14px;
+      font-weight: 600;
+      display: grid; place-items: center;
+      flex-shrink: 0;
+    }
+    .wx-avatar.blue { background: #576b95; }
+    .wx-avatar.orange { background: #fa9d3b; }
+    .wx-meta { flex: 1; min-width: 0; }
+    .wx-meta-top {
+      display: flex; justify-content: space-between; align-items: center;
+      margin-bottom: 4px;
+    }
+    .wx-name { font-size: 14px; font-weight: 500; color: #111; }
+    .wx-time { font-size: 11px; color: #999; }
+    .wx-preview {
+      font-size: 12px; color: #888;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .wx-main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+    .wx-header {
+      height: 48px;
+      padding: 0 16px;
+      display: flex; align-items: center;
+      background: #f5f5f5;
+      border-bottom: 1px solid #d6d6d6;
+      font-size: 14px; font-weight: 500;
+    }
+    .wx-messages {
+      flex: 1;
+      overflow: auto;
+      padding: 16px;
+      background: #ededed;
+    }
+    .wx-msg {
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+      margin-bottom: 14px;
+    }
+    .wx-msg.self { flex-direction: row-reverse; }
+    .wx-msg-avatar {
+      width: 36px; height: 36px;
+      border-radius: 4px;
+      background: #576b95;
+      color: #fff;
+      font-size: 12px;
+      display: grid; place-items: center;
+      flex-shrink: 0;
+    }
+    .wx-msg.self .wx-msg-avatar { background: #07c160; }
+    .wx-bubble {
+      max-width: 62%;
+      padding: 9px 12px;
+      border-radius: 4px;
+      font-size: 14px;
+      line-height: 1.45;
+      background: #fff;
+      color: #111;
+      position: relative;
+      box-shadow: 0 1px 1px rgba(0,0,0,.04);
+    }
+    .wx-bubble.self {
+      background: #95ec69;
+    }
+    .wx-footer {
+      padding: 8px 12px;
+      font-size: 11px;
+      color: #999;
+      text-align: center;
+      background: #f7f7f7;
+      border-top: 1px solid #e0e0e0;
+    }
+    @media (max-width: 900px) {
+      .grid-3, .grid-2, .wiki-layout, .settings-layout { grid-template-columns: 1fr; }
+      .wx-shell { flex-direction: column; height: auto; }
+      .wx-list { width: 100%; max-height: 200px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="banner">
+    <strong>CocoCat Console · 交互原型 v1</strong> — 侧栏 WeChat 置顶；WeChat →「会话」为仿微信左右分栏。点击列表可切换对话。
+  </div>
+
+  <div class="app">
+    <nav class="rail" aria-label="模块">
+      <div class="logo" title="CocoCat">🐱</div>
+      <button class="rail-btn active" data-module="wechat" title="WeChat"><span class="dot degraded"></span>💬</button>
+      <button class="rail-btn" data-module="wiki" title="Wiki">📖</button>
+      <button class="rail-btn" data-module="agent" title="Agent"><span class="dot up"></span>🤖</button>
+      <button class="rail-btn" data-module="memory" title="Memory"><span class="dot down"></span>🧠</button>
+      <button class="rail-btn" data-module="stack" title="Stack"><span class="dot degraded"></span>🗂️</button>
+      <div class="rail-spacer"></div>
+      <button class="rail-btn" data-module="settings" title="Settings">⚙️</button>
+    </nav>
+
+    <div class="main">
+      <!-- STACK -->
+      <div class="module-view" id="mod-stack">
+        <div class="page-header">
+          <div>
+            <h1>Stack</h1>
+            <p>启停 Driver · Memory · Agent</p>
+          </div>
+          <div class="actions" id="stack-actions-service">
+            <button class="btn primary">启动全部</button>
+            <button class="btn destructive">停止全部</button>
+            <button class="btn">刷新</button>
+          </div>
+        </div>
+        <div class="tabs" data-tabs="stack">
+          <button class="tab active" data-sub="service">服务</button>
+          <button class="tab" data-sub="logs">日志</button>
+        </div>
+        <div class="page-body">
+          <div class="sub-view active" data-sub="service" data-parent="stack">
+            <div class="hint warn">快速上手：① 启动 Driver → ② 登录微信 → ③ 启动 Agent（Memory 可选，需先 clone TencentDB 仓库）</div>
+            <div class="grid-3">
+              <div class="panel">
+                <div class="card-title">Driver <span class="badge up">运行中</span></div>
+                <p style="font-size:12px;color:var(--muted-fg);margin-bottom:12px">http://127.0.0.1:6174</p>
+                <div class="actions"><button class="btn">启动</button><button class="btn">停止</button></div>
+              </div>
+              <div class="panel">
+                <div class="card-title">Memory <span class="badge down">未启动</span></div>
+                <p style="font-size:12px;color:var(--destructive);margin-bottom:12px">缺少 gateway 源码，需 clone TencentDB-Agent-Memory</p>
+                <div class="actions"><button class="btn">启动</button><button class="btn">停止</button></div>
+              </div>
+              <div class="panel">
+                <div class="card-title">Agent <span class="badge up">运行中</span></div>
+                <p style="font-size:12px;color:var(--muted-fg);margin-bottom:12px">pid=574904</p>
+                <div class="actions"><button class="btn">启动</button><button class="btn">停止</button></div>
+              </div>
+            </div>
+          </div>
+          <div class="sub-view" data-sub="logs" data-parent="stack">
+            <div class="panel muted">
+              <div class="card-title">命令输出</div>
+              <div class="log">driver: up (http://127.0.0.1:6174)
+memory: down
+agent: up pid=574904</div>
+            </div>
+            <div class="panel" style="margin-top:12px">
+              <div class="card-title">Agent 日志</div>
+              <div class="log">[agent] listening on ...
+[agent] chat wxid_xxx connected</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- WECHAT -->
+      <div class="module-view active" id="mod-wechat">
+        <div class="page-header">
+          <div>
+            <h1>WeChat</h1>
+            <p>连接 Driver、登录、桌面预览</p>
+          </div>
+          <div class="actions" id="wechat-actions-desktop" style="display:none">
+            <button class="btn">刷新</button>
+            <button class="btn">在浏览器打开 VNC</button>
+            <button class="btn">连接</button>
+          </div>
+          <div class="actions" id="wechat-actions-connect">
+            <button class="btn primary">开始登录</button>
+            <button class="btn">刷新</button>
+          </div>
+        </div>
+        <div class="tabs" data-tabs="wechat">
+          <button class="tab active" data-sub="connect">连接</button>
+          <button class="tab" data-sub="desktop">桌面 (VNC)</button>
+          <button class="tab" data-sub="chats">会话</button>
+        </div>
+        <div class="page-body">
+          <div class="sub-view active" data-sub="connect" data-parent="wechat">
+            <div class="panel" style="max-width:420px;margin:0 auto;text-align:center">
+              <div class="card-title" style="justify-content:center">扫码登录</div>
+              <div style="width:180px;height:180px;margin:16px auto;background:#fff;border:1px solid var(--border);display:grid;place-items:center;font-size:48px">▦</div>
+              <p style="font-size:13px;color:var(--muted-fg)">等待扫码…</p>
+              <p style="font-size:12px;margin-top:8px"><span class="badge degraded">未登录</span></p>
+            </div>
+          </div>
+          <div class="sub-view flex" data-sub="desktop" data-parent="wechat">
+            <div class="vnc" style="flex:1">微信桌面 VNC（已登录时默认落在此 Tab，占满主区）</div>
+          </div>
+          <div class="sub-view" data-sub="chats" data-parent="wechat">
+            <div class="wx-shell">
+              <aside class="wx-list">
+                <div class="wx-search"><input type="text" placeholder="搜索" readonly /></div>
+                <div class="wx-items">
+                  <div class="wx-item active" data-chat="family">
+                    <div class="wx-avatar">家</div>
+                    <div class="wx-meta">
+                      <div class="wx-meta-top"><span class="wx-name">家庭群</span><span class="wx-time">18:32</span></div>
+                      <div class="wx-preview">可可猫: 好的，我晚点回你～</div>
+                    </div>
+                  </div>
+                  <div class="wx-item" data-chat="work">
+                    <div class="wx-avatar blue">工</div>
+                    <div class="wx-meta">
+                      <div class="wx-meta-top"><span class="wx-name">工作群</span><span class="wx-time">昨天</span></div>
+                      <div class="wx-preview">[图片]</div>
+                    </div>
+                  </div>
+                  <div class="wx-item" data-chat="file">
+                    <div class="wx-avatar orange">文</div>
+                    <div class="wx-meta">
+                      <div class="wx-meta-top"><span class="wx-name">文件传输助手</span><span class="wx-time">周一</span></div>
+                      <div class="wx-preview">README.pdf</div>
+                    </div>
+                  </div>
+                </div>
+              </aside>
+              <main class="wx-main" id="wx-chat-main">
+                <header class="wx-header">家庭群</header>
+                <div class="wx-messages" id="wx-messages">
+                  <div class="wx-msg other">
+                    <div class="wx-msg-avatar">妈</div>
+                    <div class="wx-bubble">今晚回来吃饭吗？</div>
+                  </div>
+                  <div class="wx-msg self">
+                    <div class="wx-msg-avatar">我</div>
+                    <div class="wx-bubble self">回的，大概七点到</div>
+                  </div>
+                  <div class="wx-msg other">
+                    <div class="wx-msg-avatar">猫</div>
+                    <div class="wx-bubble">好的，我晚点回你～</div>
+                  </div>
+                </div>
+                <footer class="wx-footer">只读预览 · M1 不在 Console 内发消息（数据来自 Driver API）</footer>
+              </main>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- MEMORY -->
+      <div class="module-view" id="mod-memory">
+        <div class="page-header">
+          <div><h1>Memory</h1><p>TencentDB 长期记忆</p></div>
+          <div class="actions"><button class="btn">刷新</button></div>
+        </div>
+        <div class="tabs" data-tabs="memory">
+          <button class="tab active" data-sub="overview">概览</button>
+          <button class="tab" data-sub="playground">试跑</button>
+        </div>
+        <div class="page-body">
+          <div class="sub-view active" data-sub="overview" data-parent="memory">
+            <div class="panel" style="margin-bottom:12px">
+              <div class="card-title">Gateway <span class="badge down">未启动</span></div>
+              <p style="font-size:13px;color:var(--muted-fg)">Memory down 时默认显示此页</p>
+              <button class="btn" style="margin-top:12px" onclick="switchModule('stack')">去 Stack 启动 Memory</button>
+            </div>
+            <div class="panel muted">
+              <div class="card-title">L3 Persona（只读）</div>
+              <pre style="font-size:12px;color:var(--muted-fg)">## 相处记忆\n（Gateway 启动后可预览）</pre>
+            </div>
+          </div>
+          <div class="sub-view" data-sub="playground" data-parent="memory">
+            <div class="panel">
+              <div class="field"><label>Session Key</label><input value="wxid_xxx@chatroom" /></div>
+              <div class="field"><label>Recall 查询</label><input value="用户偏好与相处方式" /></div>
+              <button class="btn primary">运行 Recall</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- AGENT -->
+      <div class="module-view" id="mod-agent">
+        <div class="page-header">
+          <div><h1>Agent</h1><p>人设、会话配置、群桥接</p></div>
+        </div>
+        <div class="tabs" data-tabs="agent">
+          <button class="tab active" data-sub="persona">Persona</button>
+          <button class="tab" data-sub="chats">Chats</button>
+          <button class="tab" data-sub="bridge">Bridge</button>
+        </div>
+        <div class="page-body" style="display:flex;flex-direction:column">
+          <div class="sub-view active" data-sub="persona" data-parent="agent" style="flex:1;display:flex;flex-direction:column">
+            <div class="field" style="flex:1;display:flex;flex-direction:column">
+              <label>persona.md</label>
+              <textarea style="flex:1;min-height:200px">## 核心性格\n你是可可猫…</textarea>
+            </div>
+            <div class="sticky-footer">
+              <button class="btn primary">保存</button>
+              <button class="btn">重置</button>
+            </div>
+          </div>
+          <div class="sub-view" data-sub="chats" data-parent="agent">
+            <div class="grid-2">
+              <div class="panel"><div class="card-title">会话</div><div class="tree"><div class="sel">家庭群</div></div></div>
+              <div class="panel"><div class="card-title">Wiki 映射</div><p style="font-size:13px;color:var(--muted-fg)">project-uuid → …</p></div>
+            </div>
+          </div>
+          <div class="sub-view" data-sub="bridge" data-parent="agent">
+            <div class="panel"><div class="card-title">群桥接策略</div><p style="font-size:13px">require_mention: true</p></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- WIKI -->
+      <div class="module-view" id="mod-wiki">
+        <div class="page-header">
+          <div style="display:flex;align-items:center;gap:12px">
+            <button class="project-picker">我的知识库 ▾</button>
+            <div>
+              <h1>Wiki</h1>
+              <p>外部资料库编辑与检索</p>
+            </div>
+          </div>
+        </div>
+        <div class="tabs" data-tabs="wiki">
+          <button class="tab active" data-sub="wiki">词条</button>
+          <button class="tab" data-sub="sources">来源</button>
+          <button class="tab" data-sub="search">搜索</button>
+          <button class="tab" data-sub="lint">Lint</button>
+          <button class="tab" data-sub="review">审阅</button>
+        </div>
+        <div class="page-body">
+          <div class="wiki-layout">
+            <div class="panel muted">
+              <div class="card-title">文件树</div>
+              <div class="tree">
+                <div class="sel">index.md</div>
+                <div>topics/</div>
+                <div>raw/sources/</div>
+              </div>
+            </div>
+            <div class="panel">
+              <div class="card-title">编辑器 / 内容区</div>
+              <p style="font-size:13px;color:var(--muted-fg);margin-top:8px">仅一条 ConsoleRail — 内层 IconSidebar 已移除，子视图改为顶栏 Tab。</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- SETTINGS -->
+      <div class="module-view" id="mod-settings">
+        <div class="page-header">
+          <div><h1>Settings</h1><p>全局与项目配置</p></div>
+        </div>
+        <div class="tabs" data-tabs="settings">
+          <button class="tab active" data-sub="cococat-group">CocoCat</button>
+          <button class="tab" data-sub="wiki-group">Wiki 与模型</button>
+          <button class="tab" data-sub="system-group">系统</button>
+        </div>
+        <div class="page-body">
+          <div class="settings-layout">
+            <div class="settings-nav" id="settings-nav">
+              <!-- filled by JS -->
+            </div>
+            <div class="panel" id="settings-content">
+              <div class="card-title">CocoCat 路径与 Token</div>
+              <div class="field"><label>配置目录</label><input value="~/.config/cococat/" readonly /></div>
+              <div class="field"><label>数据目录</label><input value="~/.local/share/cococat/" readonly /></div>
+              <button class="btn">打开配置目录</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const SETTINGS_NAV = {
+      'cococat-group': [{ id: 'cococat', label: 'CocoCat' }],
+      'wiki-group': [
+        { id: 'llm', label: 'LLM' },
+        { id: 'embedding', label: 'Embedding' },
+        { id: 'multimodal', label: '多模态' },
+        { id: 'web-search', label: '网络搜索' },
+        { id: 'output', label: '输出语言' },
+        { id: 'source-watch', label: '来源监听' },
+        { id: 'scheduled-import', label: '定时导入' },
+      ],
+      'system-group': [
+        { id: 'interface', label: '界面与语言' },
+        { id: 'network', label: '网络代理' },
+        { id: 'api-server', label: 'API 服务' },
+        { id: 'maintenance', label: '维护' },
+        { id: 'about', label: '关于' },
+      ],
+    };
+
+    const WX_CHATS = {
+      family: {
+        title: '家庭群',
+        messages: [
+          { who: 'other', name: '妈', text: '今晚回来吃饭吗？' },
+          { who: 'self', name: '我', text: '回的，大概七点到' },
+          { who: 'other', name: '猫', text: '好的，我晚点回你～' },
+        ],
+      },
+      work: {
+        title: '工作群',
+        messages: [
+          { who: 'other', name: '同', text: '明天的会改到下午 3 点' },
+          { who: 'self', name: '我', text: '收到' },
+        ],
+      },
+      file: {
+        title: '文件传输助手',
+        messages: [
+          { who: 'self', name: '我', text: 'README.pdf' },
+          { who: 'other', name: '助', text: '已发送' },
+        ],
+      },
+    };
+
+    let activeModule = 'wechat';
+    let activeSettingsGroup = 'cococat-group';
+
+    function switchModule(mod) {
+      activeModule = mod;
+      document.querySelectorAll('.rail-btn[data-module]').forEach((b) => {
+        b.classList.toggle('active', b.dataset.module === mod);
+      });
+      document.querySelectorAll('.module-view').forEach((v) => {
+        v.classList.toggle('active', v.id === 'mod-' + mod);
+      });
+    }
+
+    function switchSub(parent, sub) {
+      const root = document.getElementById('mod-' + parent);
+      if (!root) return;
+      root.querySelectorAll('.tab[data-sub]').forEach((t) => {
+        t.classList.toggle('active', t.dataset.sub === sub);
+      });
+      root.querySelectorAll('.sub-view[data-parent="' + parent + '"]').forEach((v) => {
+        const on = v.dataset.sub === sub;
+        v.classList.toggle('active', on);
+        if (on && v.classList.contains('flex')) {
+          v.style.display = 'flex';
+        } else if (!on) {
+          v.style.display = '';
+        }
+      });
+      if (parent === 'wechat') {
+        const isDesktop = sub === 'desktop';
+        document.getElementById('wechat-actions-desktop').style.display = isDesktop ? 'flex' : 'none';
+        document.getElementById('wechat-actions-connect').style.display = isDesktop ? 'none' : 'flex';
+      }
+      if (parent === 'stack') {
+        document.getElementById('stack-actions-service').style.display = sub === 'service' ? 'flex' : 'none';
+      }
+      if (parent === 'settings') {
+        activeSettingsGroup = sub;
+        renderSettingsNav(sub);
+      }
+    }
+
+    function renderSettingsNav(group) {
+      const nav = document.getElementById('settings-nav');
+      const items = SETTINGS_NAV[group] || [];
+      nav.innerHTML = items.map((it, i) =>
+        `<button class="${i === 0 ? 'active' : ''}" data-cat="${it.id}">${it.label}</button>`
+      ).join('');
+      nav.querySelectorAll('button').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          nav.querySelectorAll('button').forEach((b) => b.classList.remove('active'));
+          btn.classList.add('active');
+          document.getElementById('settings-content').innerHTML =
+            `<div class="card-title">${btn.textContent}</div>
+             <p style="font-size:13px;color:var(--muted-fg);margin-top:12px">「${btn.textContent}」配置表单区域示意</p>`;
+        });
+      });
+      const first = items[0];
+      if (first) {
+        document.getElementById('settings-content').innerHTML =
+          group === 'cococat-group'
+            ? `<div class="card-title">CocoCat 路径与 Token</div>
+               <div class="field"><label>配置目录</label><input value="~/.config/cococat/" readonly /></div>
+               <div class="field"><label>数据目录</label><input value="~/.local/share/cococat/" readonly /></div>
+               <button class="btn">打开配置目录</button>`
+            : `<div class="card-title">${first.label}</div>
+               <p style="font-size:13px;color:var(--muted-fg);margin-top:12px">配置表单示意</p>`;
+      }
+    }
+
+    document.querySelectorAll('.rail-btn[data-module]').forEach((btn) => {
+      btn.addEventListener('click', () => switchModule(btn.dataset.module));
+    });
+
+    document.querySelectorAll('.tabs').forEach((bar) => {
+      const parent = bar.dataset.tabs;
+      bar.querySelectorAll('.tab').forEach((tab) => {
+        tab.addEventListener('click', () => switchSub(parent, tab.dataset.sub));
+      });
+    });
+
+    function renderWxChat(chatId) {
+      const chat = WX_CHATS[chatId];
+      if (!chat) return;
+      document.querySelectorAll('[data-sub="chats"] .wx-item[data-chat]').forEach((el) => {
+        el.classList.toggle('active', el.dataset.chat === chatId);
+      });
+      document.querySelector('#wx-chat-main .wx-header').textContent = chat.title;
+      document.getElementById('wx-messages').innerHTML = chat.messages.map((m) => `
+        <div class="wx-msg ${m.who}">
+          <div class="wx-msg-avatar">${m.name}</div>
+          <div class="wx-bubble ${m.who === 'self' ? 'self' : ''}">${m.text}</div>
+        </div>
+      `).join('');
+    }
+
+    document.querySelectorAll('[data-sub="chats"] .wx-item[data-chat]').forEach((el) => {
+      el.addEventListener('click', () => renderWxChat(el.dataset.chat));
+    });
+
+    renderSettingsNav('cococat-group');
+    window.switchModule = switchModule;
+  </script>
+</body>
+</html>

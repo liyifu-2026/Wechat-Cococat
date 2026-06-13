@@ -1,0 +1,428 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>CocoCat · 系统 / Wiki IA 方案预览</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg: #121210; --surface: #1a1917; --elevated: #222120; --hover: #2a2926;
+      --border: rgba(228,224,216,.09); --border-strong: rgba(228,224,216,.16);
+      --text: #e4e2dd; --text-muted: #8a8880; --accent: #8b9a7b;
+      --accent-dim: rgba(139,154,123,.14); --warn: #b8a068; --warn-dim: rgba(184,160,104,.14);
+      --danger: #a67c6b; --nav-w: 72px; --sys-w: 200px; --top-h: 48px;
+      --font: system-ui, -apple-system, "Segoe UI", sans-serif; --radius: 8px;
+    }
+    html, body { height: 100%; }
+    body { font-family: var(--font); background: var(--bg); color: var(--text); font-size: 13px; overflow: hidden; }
+
+    .open-hint {
+      position: fixed; bottom: 12px; left: 84px; right: 12px; z-index: 200;
+      padding: 10px 14px; border-radius: var(--radius);
+      background: var(--elevated); border: 1px solid var(--border-strong);
+      font-size: 11px; color: var(--text-muted); line-height: 1.5;
+    }
+    .open-hint code { color: var(--accent); background: var(--accent-dim); padding: 1px 5px; border-radius: 4px; }
+    .open-hint button { margin-left: 8px; padding: 4px 10px; border-radius: 5px; border: 1px solid var(--border);
+      background: var(--surface); color: var(--text); font-size: 11px; cursor: pointer; }
+
+    .picker {
+      position: fixed; top: 12px; right: 12px; z-index: 100;
+      background: var(--elevated); border: 1px solid var(--border-strong);
+      border-radius: var(--radius); padding: 12px 14px; max-width: 300px;
+      box-shadow: 0 8px 32px rgba(0,0,0,.45);
+    }
+    .picker h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--text-muted); margin-bottom: 8px; }
+    .picker-btns { display: flex; flex-wrap: wrap; gap: 6px; }
+    .picker-btns button {
+      padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border);
+      background: var(--surface); color: var(--text-muted); font-size: 12px; cursor: pointer;
+    }
+    .picker-btns button.active { background: var(--accent-dim); color: var(--accent); border-color: var(--accent); font-weight: 600; }
+    .picker-note { font-size: 11px; color: var(--text-muted); line-height: 1.45; margin-top: 8px; }
+
+    .app {
+      display: grid;
+      grid-template-columns: var(--nav-w) 1fr;
+      grid-template-rows: var(--top-h) 1fr;
+      height: 100vh;
+    }
+    .rail {
+      grid-row: 1 / -1; grid-column: 1;
+      background: var(--surface); border-right: 1px solid var(--border);
+      display: flex; flex-direction: column; align-items: center; padding: 12px 0; gap: 4px;
+    }
+    .rail-item {
+      width: 52px; padding: 10px 4px; border-radius: var(--radius); border: none;
+      background: transparent; color: var(--text-muted); font-size: 10px;
+    }
+    .rail-item.active { background: var(--accent-dim); color: var(--accent); }
+    .topbar {
+      grid-column: 2; grid-row: 1;
+      display: flex; align-items: center; gap: 12px; padding: 0 16px;
+      border-bottom: 1px solid var(--border); background: var(--surface);
+    }
+    .pill { display: flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 6px;
+      font-size: 12px; font-weight: 600; background: var(--accent-dim); color: var(--accent); }
+    .pill-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+    .topbar-spacer { flex: 1; }
+    .kbd { font-size: 10px; padding: 2px 6px; border-radius: 4px; border: 1px solid var(--border); color: var(--text-muted); }
+
+    .workspace {
+      grid-column: 2; grid-row: 2;
+      display: flex; min-height: 0; overflow: hidden; background: var(--bg);
+    }
+    .sys-side {
+      width: var(--sys-w); flex-shrink: 0; border-right: 1px solid var(--border);
+      background: var(--surface); padding: 12px 8px; overflow-y: auto;
+    }
+    .sys-side button {
+      display: block; width: 100%; text-align: left; padding: 10px 12px; margin-bottom: 2px;
+      border: none; border-radius: 6px; background: transparent; color: var(--text-muted);
+      font-size: 13px; cursor: pointer;
+    }
+    .sys-side button:hover { background: var(--hover); color: var(--text); }
+    .sys-side button.active { background: var(--accent-dim); color: var(--accent); font-weight: 600; }
+    .sys-side button.ghost { opacity: .45; pointer-events: none; font-size: 12px; }
+    .sys-side .sep { height: 1px; background: var(--border); margin: 8px 4px; }
+
+    .sys-body { flex: 1; min-width: 0; display: flex; flex-direction: column; overflow: hidden; }
+    .panel { display: none; flex-direction: column; flex: 1; min-height: 0; }
+    .panel.active { display: flex; }
+
+    .page-head { padding: 20px 24px 12px; border-bottom: 1px solid var(--border); background: var(--surface); flex-shrink: 0; }
+    .page-head h1 { font-size: 17px; font-weight: 600; }
+    .page-head p { font-size: 12px; color: var(--text-muted); margin-top: 4px; }
+
+    .group-tabs, .wiki-tabs {
+      display: flex; gap: 2px; padding: 0 24px; border-bottom: 1px solid var(--border);
+      background: var(--surface); flex-shrink: 0;
+    }
+    .group-tabs button, .wiki-tabs button {
+      padding: 10px 14px; border: none; background: transparent; color: var(--text-muted);
+      font-size: 12px; cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -1px;
+    }
+    .group-tabs button.active, .wiki-tabs button.active {
+      color: var(--text); border-bottom-color: var(--accent); font-weight: 600;
+    }
+
+    .settings-layout { display: flex; flex: 1; min-height: 0; }
+    .cat-side {
+      width: 220px; flex-shrink: 0; border-right: 1px solid var(--border);
+      background: var(--elevated); padding: 12px 8px; overflow-y: auto;
+    }
+    .cat-side button {
+      display: block; width: 100%; padding: 8px 10px; margin-bottom: 2px; border: none;
+      border-radius: 6px; background: transparent; color: var(--text-muted); font-size: 12px; text-align: left;
+    }
+    .cat-side button.active { background: var(--hover); color: var(--text); font-weight: 600; }
+    .cat-side button.hl { box-shadow: inset 0 0 0 1px var(--accent); color: var(--accent); }
+
+    .settings-main { flex: 1; padding: 20px 24px; overflow-y: auto; }
+    .card { border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); padding: 16px; margin-bottom: 12px; }
+    .card h3 { font-size: 14px; margin-bottom: 6px; }
+    .card p { font-size: 12px; color: var(--text-muted); line-height: 1.5; }
+    .provider-row {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 12px 14px; border: 1px solid var(--border); border-radius: 6px; margin-top: 10px;
+    }
+    .provider-row.on { border-color: var(--accent); background: var(--accent-dim); }
+    .toggle { width: 36px; height: 20px; border-radius: 10px; background: var(--hover); position: relative; }
+    .toggle.on { background: var(--accent); }
+    .toggle::after { content: ''; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff; }
+    .toggle.on::after { left: 18px; }
+
+    .wiki-workspace { display: flex; flex: 1; min-height: 0; gap: 8px; padding: 12px; }
+    .wiki-tree { width: 220px; flex-shrink: 0; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); padding: 10px; font-size: 12px; color: var(--text-muted); }
+    .wiki-tree .item { padding: 6px 8px; border-radius: 4px; }
+    .wiki-tree .item.sel { background: var(--hover); color: var(--text); }
+    .wiki-editor { flex: 1; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); padding: 16px; }
+    .wiki-hint { margin: 8px 12px 0; padding: 8px 12px; border-radius: 6px; background: var(--warn-dim); color: var(--warn); font-size: 11px; flex-shrink: 0; }
+
+    .tag { display: inline-block; font-size: 10px; padding: 2px 6px; border-radius: 4px; margin-left: 6px; font-weight: 600; vertical-align: middle; }
+    .tag.good { background: var(--accent-dim); color: var(--accent); }
+    .tag.warn { background: var(--warn-dim); color: var(--warn); }
+
+    .problem-box {
+      margin: 12px 24px 0; padding: 12px 14px; border-radius: var(--radius);
+      border: 1px dashed var(--danger); background: rgba(166,124,107,.08);
+      font-size: 12px; color: #d4a89a; line-height: 1.5; flex-shrink: 0;
+    }
+    .placeholder { padding: 24px; color: var(--text-muted); }
+  </style>
+</head>
+<body>
+
+<div class="picker">
+  <h2>布局方案</h2>
+  <div class="picker-btns">
+    <button type="button" data-scheme="current" class="active">现状</button>
+    <button type="button" data-scheme="a">方案 A</button>
+    <button type="button" data-scheme="b">方案 B</button>
+  </div>
+  <p class="picker-note" id="scheme-desc">现状：Wiki LLM 无入口；专家 IDE 挤在「高级」。</p>
+</div>
+
+<div class="open-hint" id="open-hint">
+  本地预览：在项目目录执行
+  <code>python3 -m http.server 8877 --directory docs/mockups</code>
+  然后打开 <code id="open-url">http://127.0.0.1:8877/console-system-wiki-ia.html</code>
+  <button type="button" onclick="document.getElementById('open-hint').style.display='none'">知道了</button>
+</div>
+
+<div class="app">
+  <nav class="rail"><div class="rail-item">总览</div><div class="rail-item">收件箱</div><div class="rail-item">大脑</div><div class="rail-item active">系统</div></nav>
+  <header class="topbar">
+    <span class="pill"><span class="pill-dot"></span>可接客</span>
+    <span style="font-size:12px;color:var(--text-muted)">维护者</span>
+    <span class="topbar-spacer"></span>
+    <span class="kbd">⌘K</span>
+  </header>
+
+  <div class="workspace">
+    <aside class="sys-side" id="sys-side">
+      <button type="button" data-panel="services">服务</button>
+      <button type="button" data-panel="program">程序</button>
+      <button type="button" data-panel="logs">日志</button>
+      <button type="button" data-panel="advanced" class="active">高级</button>
+    </aside>
+
+    <div class="sys-body">
+      <div id="problem-banner" class="problem-box">
+        ⚠ Wiki LLM 在代码里属于「Wiki 与模型 → LLM 模型」，但 v2 界面<strong>进不去</strong>。专家 IDE 挤在下方「高级」面板。
+      </div>
+
+      <section id="panel-services" class="panel">
+        <div class="placeholder"><h1 style="color:var(--text);font-size:17px">服务</h1><p style="margin-top:8px">Driver / Agent 启停</p></div>
+      </section>
+
+      <section id="panel-program" class="panel">
+        <header class="page-head"><h1>程序</h1><p>Agent 模型、token、配置目录（无 Wiki LLM）</p></header>
+        <div class="settings-layout">
+          <aside class="cat-side"><button class="active">Agent 模型</button><button>程序</button></aside>
+          <div class="settings-main"><div class="card"><h3>Agent 模型</h3><p>微信接待引擎，≠ Wiki LLM。</p></div></div>
+        </div>
+      </section>
+
+      <section id="panel-wiki-models" class="panel">
+        <header class="page-head">
+          <h1 id="wiki-models-title">Wiki 与模型 <span class="tag good">LLM 在这</span></h1>
+          <p>LLM、向量嵌入、入库、外部搜索</p>
+        </header>
+        <div id="group-tabs-b" class="group-tabs" style="display:none">
+          <button>程序</button><button class="active">Wiki 与模型</button><button>系统</button>
+        </div>
+        <div class="settings-layout">
+          <aside class="cat-side">
+            <button class="hl active">LLM 模型</button>
+            <button>向量嵌入</button><button>图片描述</button><button>外部信息源</button>
+            <button>资料监控</button><button>定时导入</button>
+          </aside>
+          <div class="settings-main">
+            <div class="card">
+              <h3>LLM 模型</h3>
+              <p>Wiki 聊天 / Lint / 入库用的 provider。</p>
+              <div class="provider-row on"><div><strong>MiniMax</strong></div><div class="toggle on"></div></div>
+              <div class="provider-row"><div><strong>DeepSeek</strong></div><div class="toggle"></div></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="panel-knowledge" class="panel">
+        <header class="page-head"><h1>知识库 <span class="tag good">全屏 IDE</span></h1><p>原始资料 · 搜索 · 检查 · 待审阅</p></header>
+        <div class="wiki-tabs">
+          <button>Wiki</button><button class="active">原始资料</button><button>搜索</button><button>检查</button><button>待审阅</button>
+        </div>
+        <p class="wiki-hint">上传：原始资料 Tab →「导入文件 / 导入文件夹」</p>
+        <div class="wiki-workspace">
+          <div class="wiki-tree"><div style="color:var(--text);font-weight:600;margin-bottom:6px">raw/sources</div><div class="item sel">report.pdf</div><div class="item">faq/</div></div>
+          <div class="wiki-editor">专家工具独立全屏，不再塞进「高级」。</div>
+        </div>
+      </section>
+
+      <section id="panel-logs" class="panel">
+        <div class="placeholder"><h1 style="color:var(--text);font-size:17px">日志</h1></div>
+      </section>
+
+      <section id="panel-advanced" class="panel active">
+        <header class="page-head"><h1>高级</h1><p id="advanced-desc">界面 · Memory · Wiki 专家(挤) · bridge</p></header>
+        <div class="group-tabs" id="advanced-tabs">
+          <button class="active">界面</button><button>Memory</button>
+          <button id="adv-wiki-tab">Wiki 专家</button><button>群聊 bridge</button>
+        </div>
+        <div id="advanced-squeeze" class="settings-main">
+          <div class="card" style="border-color:var(--danger)">
+            <h3>现状：Wiki 专家挤在这里</h3>
+            <p>空间小、难用；且 <strong>Wiki LLM 设置不在此</strong>。</p>
+          </div>
+          <div class="wiki-workspace" style="height:180px;opacity:.75">
+            <div class="wiki-tree" style="font-size:10px">压缩的树…</div>
+            <div class="wiki-editor" style="font-size:11px">压缩的编辑区…</div>
+          </div>
+        </div>
+        <div id="advanced-slim" class="settings-main" style="display:none">
+          <div class="card"><h3>方案 A：高级仅保留周边能力</h3><p>界面、Memory、群 bridge。Wiki 与知识库已迁出。</p></div>
+        </div>
+      </section>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  var SCHEMES = {
+    current: {
+      desc: "现状：程序仅 Agent；Wiki LLM 无入口；专家 IDE 在「高级」。",
+      side: [
+        { id: "services", label: "服务" },
+        { id: "program", label: "程序" },
+        { id: "logs", label: "日志" },
+        { id: "advanced", label: "高级" }
+      ],
+      panel: "advanced",
+      problem: "⚠ Wiki LLM 在「Wiki 与模型 → LLM 模型」，v2 <strong>界面上进不去</strong>。专家 IDE 在「高级」。",
+      squeeze: true
+    },
+    a: {
+      desc: "方案 A：服务·程序·Wiki与模型·知识库·日志·高级(精简)。",
+      side: [
+        { id: "services", label: "服务" },
+        { id: "program", label: "程序" },
+        { id: "wiki-models", label: "Wiki 与模型 ★" },
+        { id: "knowledge", label: "知识库 ★" },
+        { id: "logs", label: "日志" },
+        { id: "advanced", label: "高级" }
+      ],
+      panel: "wiki-models",
+      problem: null,
+      squeeze: false
+    },
+    b: {
+      desc: "方案 B：程序内三组 Tab；高级去掉 Wiki 专家。",
+      side: [
+        { id: "services", label: "服务" },
+        { id: "wiki-models", label: "程序" },
+        { id: "logs", label: "日志" },
+        { id: "advanced", label: "高级" }
+      ],
+      panel: "wiki-models",
+      problem: null,
+      squeeze: false,
+      showGroupB: true
+    }
+  };
+
+  var scheme = "current";
+  var activePanel = "advanced";
+  var sysSide = document.getElementById("sys-side");
+  var schemeDesc = document.getElementById("scheme-desc");
+  var problemBanner = document.getElementById("problem-banner");
+
+  function showPanel(id) {
+    activePanel = id;
+    var panels = document.querySelectorAll(".panel");
+    for (var i = 0; i < panels.length; i++) {
+      panels[i].classList.toggle("active", panels[i].id === "panel-" + id);
+    }
+    var btns = sysSide.querySelectorAll("button[data-panel]");
+    for (var j = 0; j < btns.length; j++) {
+      btns[j].classList.toggle("active", btns[j].getAttribute("data-panel") === id);
+    }
+    if (id === "advanced") applyAdvanced();
+  }
+
+  function applyAdvanced() {
+    var s = SCHEMES[scheme];
+    var squeeze = document.getElementById("advanced-squeeze");
+    var slim = document.getElementById("advanced-slim");
+    var wikiTab = document.getElementById("adv-wiki-tab");
+    var desc = document.getElementById("advanced-desc");
+    if (s.squeeze) {
+      squeeze.style.display = "block";
+      slim.style.display = "none";
+      wikiTab.style.display = "";
+      desc.textContent = "界面 · Memory · Wiki 专家(挤) · bridge";
+    } else {
+      squeeze.style.display = "none";
+      slim.style.display = "block";
+      wikiTab.style.display = "none";
+      desc.textContent = "界面 · Memory · 群聊 bridge";
+    }
+  }
+
+  function renderScheme(name) {
+    scheme = name;
+    var s = SCHEMES[name];
+    schemeDesc.textContent = s.desc;
+    activePanel = s.panel;
+
+    sysSide.innerHTML = "";
+    for (var i = 0; i < s.side.length; i++) {
+      var b = document.createElement("button");
+      b.type = "button";
+      b.setAttribute("data-panel", s.side[i].id);
+      b.textContent = s.side[i].label;
+      b.addEventListener("click", function (e) { showPanel(e.target.getAttribute("data-panel")); });
+      sysSide.appendChild(b);
+    }
+    if (name === "a") {
+      var sep = document.createElement("div");
+      sep.className = "sep";
+      sysSide.appendChild(sep);
+      var g = document.createElement("button");
+      g.className = "ghost";
+      g.textContent = "~~高级·Wiki专家~~";
+      sysSide.appendChild(g);
+    }
+
+    if (s.problem) {
+      problemBanner.style.display = "block";
+      problemBanner.innerHTML = s.problem;
+    } else {
+      problemBanner.style.display = "none";
+    }
+
+    var title = document.getElementById("wiki-models-title");
+    var tabsB = document.getElementById("group-tabs-b");
+    if (name === "b") {
+      title.innerHTML = '程序 <span class="tag warn">三组 Tab</span>';
+      tabsB.style.display = "flex";
+    } else if (name === "a") {
+      title.innerHTML = 'Wiki 与模型 <span class="tag good">LLM 在这</span>';
+      tabsB.style.display = "none";
+    } else {
+      title.innerHTML = 'Wiki 与模型';
+      tabsB.style.display = "none";
+    }
+
+    showPanel(activePanel);
+  }
+
+  var pickerBtns = document.querySelectorAll(".picker-btns button");
+  for (var k = 0; k < pickerBtns.length; k++) {
+    pickerBtns[k].addEventListener("click", function () {
+      for (var m = 0; m < pickerBtns.length; m++) pickerBtns[m].classList.remove("active");
+      this.classList.add("active");
+      renderScheme(this.getAttribute("data-scheme"));
+    });
+  }
+
+  // 初始侧栏按钮
+  var initBtns = sysSide.querySelectorAll("button[data-panel]");
+  for (var n = 0; n < initBtns.length; n++) {
+    initBtns[n].addEventListener("click", function () { showPanel(this.getAttribute("data-panel")); });
+  }
+
+  if (location.protocol === "file:") {
+    document.getElementById("open-hint").innerHTML =
+      "当前为 <code>file://</code> 打开，一般也能看。若空白请改用本地服务器：" +
+      "<code>python3 -m http.server 8877 --directory docs/mockups</code> " +
+      "→ <code>http://127.0.0.1:8877/console-system-wiki-ia.html</code> " +
+      "<button type='button' onclick='document.getElementById(\"open-hint\").style.display=\"none\"'>知道了</button>";
+  }
+})();
+</script>
+</body>
+</html>

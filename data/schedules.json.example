@@ -1,0 +1,16 @@
+{
+  "quietHours": {
+    "start": "23:00",
+    "end": "08:00"
+  },
+  "allowlistChatIds": [],
+  "jobs": [
+    {
+      "id": "morning-ping",
+      "chatId": "12345@chatroom",
+      "cron": "0 9 * * *",
+      "prompt": "如果昨晚有未读重要事项，用一句话问候群友；无事则不发。",
+      "enabled": false
+    }
+  ]
+}

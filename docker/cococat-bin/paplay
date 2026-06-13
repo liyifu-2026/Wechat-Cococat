@@ -1,0 +1,3 @@
+#!/bin/sh
+# CocoCat: swallow notification / UI sounds in the container desktop.
+exit 0

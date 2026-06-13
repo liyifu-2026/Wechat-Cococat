@@ -1,0 +1,39 @@
+# CocoCat Driver (container) + CocoCat Agent (host).
+#
+# Build image first (local fork — NOT ghcr.io):
+#   pnpm build:image
+#
+# Start:
+#   docker compose up -d
+#   pnpm agent
+#
+# Host data (bind mounts):
+#   ~/.local/share/cococat/wechat-home  → /home/wechat
+#   ~/.local/share/cococat/data         → /data (includes artifacts/)
+
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: cococat-redis
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+
+  agent-wechat:
+    image: ${AGENT_WECHAT_IMAGE:-agent-wechat:amd64}
+    container_name: agent-wechat
+    security_opt:
+      - seccomp=unconfined
+    cap_add:
+      - SYS_PTRACE
+      - NET_ADMIN
+    ports:
+      - "6174:6174"
+    volumes:
+      - ${COCOCAT_DATA_DIR:-${AGENT_WECHAT_DATA_ROOT:-~/.local/share/cococat}}/data:/data
+      - ${COCOCAT_DATA_DIR:-${AGENT_WECHAT_DATA_ROOT:-~/.local/share/cococat}}/wechat-home:/home/wechat
+      - ${COCOCAT_CONFIG_DIR:-~/.config/cococat}/token:/data/auth-token:ro
+    environment:
+      - TZ=Asia/Shanghai
+      - PROXY=${PROXY:-}
+    restart: unless-stopped

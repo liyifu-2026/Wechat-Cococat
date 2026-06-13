@@ -1,0 +1,56 @@
+---
+title: CLI Installation
+description: Install the wx command-line tool.
+---
+
+The `wx` CLI lets you manage the CocoCat Driver container and interact with WeChat from your terminal.
+
+## Install
+
+From the monorepo:
+
+```bash
+pnpm install
+pnpm --filter @cococat/cli build
+pnpm cli -- --version
+```
+
+Or globally:
+
+```bash
+npm install -g @cococat/cli
+```
+
+This installs the `wx` command.
+
+## Prerequisites
+
+- **Node.js >= 22**
+- **Docker** installed and running
+
+## Verify installation
+
+```bash
+wx --version
+```
+
+## Configuration
+
+The CLI reads configuration from:
+
+| Source | Description |
+|--------|-------------|
+| `AGENT_WECHAT_URL` | Server URL (default: `http://localhost:6174`) |
+| `AGENT_WECHAT_TOKEN` | Auth token (overrides token file) |
+| `~/.config/cococat/token` | Auto-generated auth token (created on first `wx up`) |
+
+Upgrading from `agent-wechat`? Run **`pnpm migrate`** once to copy legacy config.
+
+The auth token is shared with the container via a read-only volume mount.
+
+## Global options
+
+| Option | Description |
+|--------|-------------|
+| `-V, --version` | Show version |
+| `-h, --help` | Show help |

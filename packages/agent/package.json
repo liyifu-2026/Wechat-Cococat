@@ -1,0 +1,35 @@
+{
+  "name": "@cococat/agent",
+  "version": "0.5.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "cococat-agent": "./dist/cli.js"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "tsc && node --test dist/smoke.test.js dist/escalation/triage.test.js dist/escalation/decision.test.js dist/preview-reply.test.js dist/reply-guard.test.js dist/transcript.test.js dist/thoughtful.test.js dist/low-signal.test.js dist/wiki-context.test.js dist/wiki-scope-refresh.test.js dist/wiki-registry-sync.test.js dist/schedules/quiet-hours.test.js dist/group-reply-policy.test.js dist/inbound-gate.test.js dist/queue/fast-discard.test.js dist/queue/queue-smoke.test.js dist/send-image.test.js dist/agent-trace.test.js",
+    "start": "node dist/cli.js"
+  },
+  "dependencies": {
+    "@cococat/shared": "workspace:*",
+    "@earendil-works/pi-agent-core": "0.78.1",
+    "@earendil-works/pi-ai": "0.78.1",
+    "@sinclair/typebox": "0.34.48",
+    "bullmq": "^5.34.5",
+    "ioredis": "^5.4.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22",
+    "typescript": "^5.4.5"
+  }
+}

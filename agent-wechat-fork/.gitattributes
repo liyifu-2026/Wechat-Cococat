@@ -1,2 +1,0 @@
-# Shell scripts must use LF so WSL/Git Bash can run them (avoid `bash\r` errors).
-*.sh text eol=lf

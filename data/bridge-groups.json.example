@@ -1,0 +1,10 @@
+{
+  "*": {
+    "require_mention": true,
+    "reply_with_mention": "none"
+  },
+  "12345@chatroom": {
+    "require_mention": true,
+    "reply_with_mention": "none"
+  }
+}

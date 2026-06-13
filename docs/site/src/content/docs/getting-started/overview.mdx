@@ -1,0 +1,43 @@
+---
+title: What is CocoCat?
+description: WeChat AI companion — Driver, Agent, Wiki, Memory, unified Console.
+---
+
+**CocoCat** is a WeChat AI companion (可可猫). It runs the WeChat desktop app in Docker (**CocoCat Driver**) and a pi Agent on the host (**CocoCat Agent**), with optional **Wiki** and **Memory** sidecars — all managed from **CocoCat Console**.
+
+The upstream Docker image is still named `agent-wechat` for compatibility.
+
+## What you can do
+
+- **Read** chats, messages, and media (images, voice, files)
+- **Monitor** for new messages in real-time
+- **Auto-reply** with pi-agent-core on the host
+- **Manage** Wiki projects and long-term memory from one desktop app
+
+## How you can use it
+
+| Method | Best for |
+|--------|----------|
+| [CocoCat Console](/integrations/pi/setup) | **Default** — Wiki + WeChat ops + Memory + stack control |
+| [CocoCat Agent](/integrations/pi/setup) | Headless auto-reply (`pnpm agent`) |
+| [CLI (`wx`)](/getting-started/cli/installation) | Driver container, scripting, debugging |
+| [Wechaty puppet](/integrations/wechaty/puppet-setup) | Existing Wechaty bots |
+| [REST API](/reference/api) | Custom integrations |
+
+## Requirements
+
+- **Docker** (Colima on macOS, or Docker Desktop)
+- **Node.js >= 22**
+- **Not compatible with serverless environments** — the container requires `ptrace` capabilities (see [Hosting Requirements](/hosting/requirements))
+
+## Monorepo packages
+
+| Package | Description |
+|---------|-------------|
+| `@cococat/console` | CocoCat Console (Tauri) |
+| `@cococat/agent` | pi-agent-core WeChat channel (host) |
+| `@cococat/driver` | Rust channel driver (container) |
+| `@cococat/cli` | `wx` CLI |
+| `@cococat/wechaty-puppet` | Wechaty puppet implementation |
+
+Config: `~/.config/cococat/` · Data: `~/.local/share/cococat/`

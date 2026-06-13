@@ -1,0 +1,74 @@
+---
+title: Tokens & Authentication
+description: How auth tokens work, where to find them, and how to rotate them.
+---
+
+CocoCat Driver uses a simple token-based authentication to secure the REST API.
+
+## Where the token lives
+
+| Location | Description |
+|----------|-------------|
+| `~/.config/cococat/token` | **Canonical** path. Auto-generated on first `wx up` or stack start. |
+| `~/.config/agent-wechat/token` | Legacy path — still read if present; run `pnpm migrate` to copy to cococat. |
+| `/data/auth-token` | Inside the container (read-only mount of the host file) |
+| `AGENT_WECHAT_TOKEN` env var | Overrides the file-based token |
+
+## How the token is used
+
+The token serves two purposes:
+
+1. **API authentication** — every API request must include it in the `Authorization` header:
+   ```
+   Authorization: Bearer <token>
+   ```
+2. **Database encryption** — the token is used to encrypt `agent.db`, the internal database that stores session state and metadata.
+
+The CLI, Wechaty puppet, and CocoCat Agent read the token from `~/.config/cococat/token` (with legacy fallback) when connecting to `localhost`.
+
+:::caution
+Changing or losing the token means `agent.db` can no longer be read. If you regenerate the token, the old database is effectively lost and a new one will be created.
+:::
+
+## Generating a token manually
+
+```bash
+mkdir -p ~/.config/cococat
+openssl rand -hex 32 > ~/.config/cococat/token
+chmod 600 ~/.config/cococat/token
+```
+
+## Regenerating the token
+
+Using the CLI:
+
+```bash
+wx auth token --regenerate
+```
+
+Or manually:
+
+```bash
+openssl rand -hex 32 > ~/.config/cococat/token
+```
+
+Then restart the container so it picks up the new token:
+
+```bash
+wx down && wx up
+# or
+docker compose restart agent-wechat
+```
+
+## Remote access
+
+When connecting to a remote Driver server, you need the token value:
+
+```bash
+cat ~/.config/cococat/token
+```
+
+Then set it in your client configuration:
+- **CocoCat Agent**: set `AGENT_WECHAT_TOKEN` or use token file
+- **Wechaty**: `token: '<value>'` in the puppet constructor
+- **CLI**: `export AGENT_WECHAT_TOKEN=<value>`

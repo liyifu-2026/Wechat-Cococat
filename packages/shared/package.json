@@ -1,0 +1,44 @@
+{
+  "name": "@cococat/shared",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    },
+    "./types": {
+      "import": "./dist/types/index.js",
+      "types": "./dist/types/index.d.ts"
+    },
+    "./schemas": {
+      "import": "./dist/schemas/index.js",
+      "types": "./dist/schemas/index.d.ts"
+    },
+    "./chat-id": {
+      "import": "./dist/chat-id.js",
+      "types": "./dist/chat-id.d.ts"
+    },
+    "./agent-scope": {
+      "import": "./dist/agent-scope.js",
+      "types": "./dist/agent-scope.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "typecheck": "tsc --noEmit",
+    "test": "tsc && node --test dist/agent-scope.test.js"
+  },
+  "dependencies": {
+    "@noble/hashes": "^1.8.0",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22",
+    "typescript": "^5.4.5"
+  }
+}

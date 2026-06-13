@@ -1,0 +1,32 @@
+{
+  "maintainer": {
+    "chatId": "",
+    "displayName": "维护者备注名"
+  },
+  "notifyOn": {
+    "escalate": true,
+    "probeLoop": true,
+    "lowConfidence": false
+  },
+  "triage": {
+    "useLlm": false
+  },
+  "lowConfidenceThreshold": 0.45,
+  "deflectLine": "您好，这边是 CocoCat 客服，请问有什么可以帮您？",
+  "customerLine": "好的，我们已收到您的诉求，同事会尽快通过微信与您联系，请稍候。",
+  "muteHours": {
+    "escalate": 24,
+    "probeLoop": 2
+  },
+  "probeStreakThreshold": 2,
+  "wikiLinks": [
+    {
+      "path": "faq/refund.md",
+      "note": "客户提及退款/退货时，常与 escalate_a 关键词联动"
+    },
+    {
+      "path": "faq/invoice.md",
+      "note": "发票类问题缺词条时易触发 no_wiki_hit FYI"
+    }
+  ]
+}
