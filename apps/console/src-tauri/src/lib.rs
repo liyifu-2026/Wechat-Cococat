@@ -1,4 +1,5 @@
 mod agent_config;
+mod agent_worker;
 mod preview_reply;
 mod api_server;
 mod commands;
@@ -81,6 +82,11 @@ pub fn run() {
                 eprintln!("[proxy] could not resolve app_data_dir");
             }
             app.manage(commands::file_sync::FileSyncState::default());
+            std::thread::spawn(|| {
+                if let Err(err) = agent_worker::ensure_spawned() {
+                    eprintln!("[agent-worker] warmup skipped: {err}");
+                }
+            });
             api_server::start_api_server(app.handle().clone());
             Ok(())
         })
@@ -182,6 +188,9 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app, event| {
+            if matches!(event, tauri::RunEvent::Exit) {
+                agent_worker::shutdown();
+            }
             #[cfg(target_os = "macos")]
             if let tauri::RunEvent::Reopen {
                 has_visible_windows,

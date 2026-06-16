@@ -2,12 +2,17 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::process::Command;
 
+use crate::agent_worker;
 use crate::stack;
 
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PreviewReplyResult {
     pub action: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gate: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub executed_action: Option<String>,
     pub reason: String,
     pub answer: String,
     pub stealth_ok: bool,
@@ -26,7 +31,7 @@ fn agent_entry() -> PathBuf {
     stack::monorepo_root().join("packages/agent/dist/index.js")
 }
 
-fn run_agent_preview(query: &str, chat_id: Option<&str>) -> Result<PreviewReplyResult, String> {
+fn run_agent_preview_cold(query: &str, chat_id: Option<&str>) -> Result<PreviewReplyResult, String> {
     let script = preview_script();
     if !script.is_file() {
         return Err(format!("Preview script not found: {}", script.display()));
@@ -78,11 +83,18 @@ fn run_agent_preview(query: &str, chat_id: Option<&str>) -> Result<PreviewReplyR
 }
 
 #[tauri::command]
-pub fn preview_agent_reply(
+pub async fn preview_agent_reply(
     query: String,
     chat_id: Option<String>,
 ) -> Result<PreviewReplyResult, String> {
-    run_agent_preview(&query, chat_id.as_deref())
+    match agent_worker::request_preview_reply(&query, chat_id.as_deref()).await {
+        Ok(value) => serde_json::from_value(value)
+            .map_err(|e| format!("Invalid worker preview JSON: {e}")),
+        Err(worker_err) => {
+            eprintln!("[preview] worker RPC failed ({worker_err}), using cold spawn");
+            run_agent_preview_cold(&query, chat_id.as_deref())
+        }
+    }
 }
 
 #[cfg(test)]
@@ -90,13 +102,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn agent_preview_deflect_stealth_ok() {
+    fn agent_preview_probe_query_falls_back_to_reply() {
         if !agent_entry().is_file() {
-            eprintln!("skip agent_preview_deflect_stealth_ok: agent dist missing");
+            eprintln!("skip agent_preview_probe_query_falls_back_to_reply: agent dist missing");
             return;
         }
-        let result = run_agent_preview("你是不是机器人", None).expect("preview");
-        assert_eq!(result.action, "deflect");
+        // Phase 6.1: deflectLine 已移除，探针类问题走 CONTINUE_AGENT + fallback reply
+        let result = run_agent_preview_cold("你是不是机器人", None).expect("preview");
+        assert_eq!(result.action, "reply");
+        assert_eq!(result.gate.as_deref(), Some("continue"));
         assert!(result.stealth_ok);
         assert!(result.banned_hits.is_empty());
     }
