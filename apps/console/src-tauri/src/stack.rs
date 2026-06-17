@@ -1,5 +1,6 @@
 use std::path::{Path, PathBuf};
-use std::process::Command;
+
+use crate::stack_orchestrator;
 
 fn home_dir() -> PathBuf {
     std::env::var_os("HOME")
@@ -11,19 +12,10 @@ fn repo_root() -> PathBuf {
     if let Ok(root) = std::env::var("COCOCAT_REPO_ROOT") {
         return PathBuf::from(root);
     }
-    // CARGO_MANIFEST_DIR = apps/console/src-tauri → monorepo root is three levels up
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../..")
         .canonicalize()
         .unwrap_or_else(|_| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../.."))
-}
-
-fn stack_script() -> PathBuf {
-    if cfg!(target_os = "windows") {
-        repo_root().join("scripts/cococat-stack.ps1")
-    } else {
-        repo_root().join("scripts/cococat-stack.sh")
-    }
 }
 
 fn cococat_config_dir() -> PathBuf {
@@ -53,8 +45,10 @@ fn extended_path() -> String {
     let repo = repo_root();
     let mut parts: Vec<String> = vec![
         format!("{}/.local/bin", home.display()),
+        format!("{}/.local/share/cococat/bin", home.display()),
         format!("{}/.local/share/pnpm", home.display()),
         format!("{}/node_modules/.bin", repo.display()),
+        "/opt/homebrew/bin".into(),
         "/usr/local/bin".into(),
         "/usr/bin".into(),
         "/bin".into(),
@@ -82,68 +76,29 @@ pub(crate) fn node_path_env() -> String {
 }
 
 pub fn run_stack_command(service: &str, action: &str) -> Result<String, String> {
-    let script = stack_script();
-    if !script.is_file() {
-        return Err(format!("Stack script not found: {}", script.display()));
-    }
-
-    let repo = repo_root();
-    let path = extended_path();
-
-    let output = if cfg!(target_os = "windows") {
-        Command::new("powershell")
-            .arg("-NoProfile")
-            .arg("-ExecutionPolicy")
-            .arg("Bypass")
-            .arg("-File")
-            .arg(&script)
-            .arg(action)
-            .arg(service)
-            .env("COCOCAT_REPO_ROOT", repo.to_string_lossy().to_string())
-            .env("PATH", &path)
-            .output()
-            .map_err(|e| format!("Failed to run stack script: {e}"))?
-    } else {
-        Command::new("bash")
-            .arg(&script)
-            .arg(action)
-            .arg(service)
-            .env("COCOCAT_REPO_ROOT", repo.to_string_lossy().to_string())
-            .env("PATH", path)
-            .output()
-            .map_err(|e| format!("Failed to run stack script: {e}"))?
-    };
-
-    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-
-    if output.status.success() {
-        if stdout.is_empty() {
-            Ok(stderr)
-        } else if stderr.is_empty() {
-            Ok(stdout)
-        } else {
-            Ok(format!("{stdout}\n{stderr}"))
-        }
-    } else {
-        Err(if stderr.is_empty() {
-            if stdout.is_empty() {
-                format!("stack command failed: {action} {service}")
-            } else {
-                stdout
-            }
-        } else {
-            format!("{stdout}\n{stderr}").trim().to_string()
-        })
-    }
+    stack_orchestrator::execute_command(service, action)
 }
 
 #[tauri::command]
-pub fn stack_command(service: String, action: String) -> Result<String, String> {
-    run_stack_command(&service, &action)
+pub async fn stack_command(service: String, action: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || run_stack_command(&service, &action))
+        .await
+        .map_err(|e| format!("stack_command task failed: {e}"))?
 }
 
 #[tauri::command]
 pub fn read_cococat_token_cmd() -> Result<String, String> {
     read_cococat_token()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn extended_path_includes_homebrew_and_local_bin() {
+        let path = extended_path();
+        assert!(path.contains("/usr/local/bin"));
+        assert!(path.contains(".local/bin"));
+    }
 }

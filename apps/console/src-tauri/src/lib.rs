@@ -7,6 +7,7 @@ mod commands;
 mod panic_guard;
 mod proxy;
 mod stack;
+mod stack_orchestrator;
 mod types;
 
 use panic_guard::run_guarded;
@@ -192,6 +193,7 @@ pub fn run() {
         .run(|app, event| {
             if matches!(event, tauri::RunEvent::Exit) {
                 agent_worker::shutdown();
+                stack_orchestrator::shutdown_all();
             }
             #[cfg(target_os = "macos")]
             if let tauri::RunEvent::Reopen {
