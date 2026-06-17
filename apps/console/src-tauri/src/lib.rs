@@ -1,5 +1,9 @@
 mod agent_config;
 mod agent_worker;
+mod customer_types;
+mod driver_proxy;
+mod event_bridge;
+mod health;
 mod preview_reply;
 mod wiki_internal;
 mod api_server;
@@ -85,6 +89,7 @@ pub fn run() {
             }
             app.manage(commands::file_sync::FileSyncState::default());
             wiki_internal::init(app.handle().clone());
+            event_bridge::start(app.handle().clone());
             std::thread::spawn(|| {
                 if let Err(err) = agent_worker::ensure_spawned() {
                     eprintln!("[agent-worker] warmup skipped: {err}");
@@ -138,11 +143,17 @@ pub fn run() {
             set_proxy_env,
             stack::stack_command,
             stack::read_cococat_token_cmd,
+            health::get_stack_health_snapshot,
+            driver_proxy::driver_fetch,
+            driver_proxy::refresh_driver_token_cache,
             agent_config::read_config_file,
             agent_config::write_config_file,
             agent_config::list_agent_chats,
             agent_config::read_agent_chat_file,
             agent_config::write_agent_chat_file,
+            agent_config::ensure_and_bind_agent_chat_dir,
+            agent_config::read_chat_agent_proxy_enabled,
+            agent_config::set_chat_agent_proxy_enabled,
             agent_config::read_memory_persona,
             agent_config::get_cococat_paths,
             agent_config::open_cococat_folder,
@@ -150,8 +161,12 @@ pub fn run() {
             agent_config::read_stack_log,
             agent_config::list_escalation_mutes,
             agent_config::unmute_escalation_chat,
+            agent_config::mute_escalation_chat,
             agent_config::read_chat_profile,
             agent_config::write_chat_profile,
+            agent_config::patch_chat_profile,
+            customer_types::read_customer_types_config,
+            customer_types::write_customer_types_config,
             agent_config::read_chat_escalation_state,
             agent_config::read_chat_memory_summary,
             agent_config::list_console_events,

@@ -110,7 +110,7 @@ mod tests {
         // Phase 6.1: deflectLine 已移除，探针类问题走 CONTINUE_AGENT + fallback reply
         let result = run_agent_preview_cold("你是不是机器人", None).expect("preview");
         assert_eq!(result.action, "reply");
-        assert_eq!(result.gate.as_deref(), Some("continue"));
+        assert_eq!(result.source.as_deref(), Some("fallback"));
         assert!(result.stealth_ok);
         assert!(result.banned_hits.is_empty());
     }

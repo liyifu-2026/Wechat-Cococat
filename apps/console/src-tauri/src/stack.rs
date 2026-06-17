@@ -88,7 +88,9 @@ pub async fn stack_command(service: String, action: String) -> Result<String, St
 
 #[tauri::command]
 pub fn read_cococat_token_cmd() -> Result<String, String> {
-    read_cococat_token()
+    let token = read_cococat_token()?;
+    crate::driver_proxy::update_cached_token(token.clone());
+    Ok(token)
 }
 
 #[cfg(test)]
