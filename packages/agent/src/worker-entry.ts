@@ -4,6 +4,7 @@
  */
 import { createInterface } from "node:readline";
 import { previewCustomerReply } from "./preview-reply.js";
+import { handleUpstreamResponseLine } from "./wiki-rpc.js";
 
 const originalStdoutWrite = process.stdout.write.bind(process.stdout);
 
@@ -113,6 +114,7 @@ function runWorkerLoop(): void {
   logStderr("[Worker] Agent RPC worker ready");
   const rl = createInterface({ input: process.stdin, terminal: false });
   rl.on("line", (line) => {
+    if (handleUpstreamResponseLine(line)) return;
     void handleLine(line);
   });
   rl.on("close", () => {

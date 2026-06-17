@@ -193,13 +193,13 @@ pub(super) fn api_allow_unauthenticated(app: &AppHandle) -> bool {
 
 pub(super) fn api_enabled(app: &AppHandle) -> bool {
     let Some(parsed) = load_app_state(app) else {
-        return true;
+        return false;
     };
     parsed
         .get("apiConfig")
         .and_then(|v| v.get("enabled"))
         .and_then(Value::as_bool)
-        .unwrap_or(true)
+        .unwrap_or(false)
 }
 
 pub(super) fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
@@ -298,7 +298,7 @@ mod tests {
             .get("apiConfig")
             .and_then(|v| v.get("enabled"))
             .and_then(Value::as_bool)
-            .unwrap_or(true);
-        assert!(enabled_missing);
+            .unwrap_or(false);
+        assert!(!enabled_missing);
     }
 }

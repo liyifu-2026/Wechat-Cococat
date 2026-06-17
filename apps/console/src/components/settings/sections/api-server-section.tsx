@@ -148,6 +148,10 @@ export function ApiServerSection({ draft, setDraft }: Props) {
         return t("settings.sections.apiServer.statusPortConflict", {
           defaultValue: "Port 19828 in use",
         })
+      case "disabled":
+        return t("settings.sections.apiServer.statusStealth", {
+          defaultValue: "Stealth — restart app to bind port",
+        })
       case "error":
         return t("settings.sections.apiServer.statusError", { defaultValue: "Error" })
       case "unknown":

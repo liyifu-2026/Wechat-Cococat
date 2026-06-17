@@ -11,6 +11,12 @@ import {
   pickDefaultWikiAliases,
   type ConsoleProjectEntry,
 } from "./wiki-registry-sync.js";
+import {
+  isWikiInternalMode,
+  wikiListProjectsInternal,
+  wikiReadFileInternal,
+  wikiSearchFederatedInternal,
+} from "./wiki-rpc.js";
 
 export type WikiClientConfig = {
   apiUrl: string;
@@ -62,7 +68,20 @@ export class WikiClient {
     return this.registry;
   }
 
+  private useInternalTransport(): boolean {
+    return isWikiInternalMode();
+  }
+
   async listConsoleProjects(): Promise<ConsoleProjectEntry[]> {
+    if (this.useInternalTransport()) {
+      const rows = await wikiListProjectsInternal();
+      return rows.map((p) => ({
+        id: p.id,
+        name: p.name,
+        path: p.path,
+        current: p.current,
+      }));
+    }
     const r = await this.request("GET", "/projects");
     const projects = (r.projects as Array<Record<string, unknown>>) ?? [];
     return projects
@@ -131,6 +150,10 @@ export class WikiClient {
 
   async checkHealth(): Promise<boolean> {
     try {
+      if (this.useInternalTransport()) {
+        await wikiListProjectsInternal();
+        return true;
+      }
       await this.request("GET", "/projects");
       return true;
     } catch {
@@ -139,6 +162,13 @@ export class WikiClient {
   }
 
   private async resolveSingleProjectId(): Promise<string> {
+    if (this.useInternalTransport()) {
+      const projects = await this.listConsoleProjects();
+      const current = projects.find((p) => p.current);
+      const pick = current ?? projects[0];
+      if (!pick?.id) throw new Error("No wiki projects found");
+      return pick.id;
+    }
     const r = await this.request("GET", "/projects");
     const projects = (r.projects as Array<Record<string, unknown>>) ?? [];
     const current = projects.find((p) => p.current === true);
@@ -161,8 +191,62 @@ export class WikiClient {
     return [await this.resolveSingleProjectId()];
   }
 
+  private resolveProjectPath(projectId: string): string {
+    const fromConsole = this.consoleProjects.find((p) => p.id === projectId);
+    if (fromConsole?.path) return fromConsole.path;
+    for (const [, id] of this.registry.entries()) {
+      if (id === projectId) {
+        const match = this.consoleProjects.find((p) => p.id === projectId);
+        if (match?.path) return match.path;
+      }
+    }
+    throw new Error(`No project path for wiki id ${projectId}`);
+  }
+
+  private federatedProjectsForSearch(
+    projectIds: string[],
+  ): Array<{ projectPath: string; projectName?: string }> {
+    return projectIds.map((projectId, index) => {
+      const alias = this.projectAliases[index] ?? projectId;
+      const fromConsole = this.consoleProjects.find((p) => p.id === projectId);
+      const projectPath =
+        fromConsole?.path ?? this.resolveProjectPath(projectId);
+      return {
+        projectPath,
+        projectName: fromConsole?.name ?? alias,
+      };
+    });
+  }
+
   async search(query: string, topK: number): Promise<string> {
     const projectIds = await this.projectIdsForSearch();
+
+    if (this.useInternalTransport()) {
+      const projects = this.federatedProjectsForSearch(projectIds);
+      const hits = await wikiSearchFederatedInternal(
+        projects,
+        query,
+        topK,
+        true,
+      );
+      if (hits.length === 0) {
+        return `没找到和「${query}」相关的资料。`;
+      }
+      return hits
+        .slice(0, topK)
+        .map((item, i) => {
+          const alias =
+            item.projectName ??
+            this.projectAliases[i] ??
+            projectIds[i] ??
+            item.projectPath;
+          const displayPath = `${alias}/${item.relPath || item.path}`;
+          const preview = truncate(String(item.content ?? item.snippet ?? ""), 500);
+          return `[${i + 1}] ${displayPath} (score: ${item.rrfScore.toFixed(3)})\n${preview}`;
+        })
+        .join("\n\n---\n\n");
+    }
+
     const perProject = Math.max(1, Math.ceil(topK / projectIds.length));
     const merged: ScoredResult[] = [];
 
@@ -200,6 +284,9 @@ export class WikiClient {
   }
 
   async getProjectMeta(alias: string): Promise<WikiProjectMeta | null> {
+    if (this.useInternalTransport()) {
+      return null;
+    }
     const projectId = this.registry.get(alias) ?? alias;
     try {
       const r = await this.request("GET", `/projects/${projectId}/agent-scope`);
@@ -226,8 +313,11 @@ export class WikiClient {
   async readPage(fullPath: string): Promise<string> {
     const parsed = parseWikiPagePath(fullPath);
     if (parsed) {
-      const projectId =
-        this.registry.get(parsed.alias) ?? parsed.alias;
+      const projectId = this.registry.get(parsed.alias) ?? parsed.alias;
+      if (this.useInternalTransport()) {
+        const projectPath = this.resolveProjectPath(projectId);
+        return wikiReadFileInternal(projectPath, parsed.path);
+      }
       const r = await this.request(
         "GET",
         `/projects/${projectId}/files/content?path=${urlEncode(parsed.path)}`,
@@ -236,6 +326,10 @@ export class WikiClient {
     }
 
     const projectId = (await this.projectIdsForSearch())[0]!;
+    if (this.useInternalTransport()) {
+      const projectPath = this.resolveProjectPath(projectId);
+      return wikiReadFileInternal(projectPath, fullPath);
+    }
     const r = await this.request(
       "GET",
       `/projects/${projectId}/files/content?path=${urlEncode(fullPath)}`,

@@ -104,7 +104,7 @@ pub(super) fn handle_file_content(app: &AppHandle, project_id: &str, query: &str
     }
 }
 
-pub(super) fn safe_join(project_path: &str, rel: &str) -> Result<PathBuf, String> {
+pub(crate) fn safe_join(project_path: &str, rel: &str) -> Result<PathBuf, String> {
     let root = PathBuf::from(project_path);
     let rel = rel.trim_start_matches('/');
     let rel_path = Path::new(rel);
@@ -146,7 +146,7 @@ pub(super) fn safe_join(project_path: &str, rel: &str) -> Result<PathBuf, String
     Ok(joined)
 }
 
-pub(super) fn is_public_project_rel(rel: &str) -> bool {
+pub(crate) fn is_public_project_rel(rel: &str) -> bool {
     let rel = projects::normalize_path(rel).trim_start_matches('/').to_string();
     if rel
         .split('/')

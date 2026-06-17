@@ -417,13 +417,10 @@ export const useWikiStore = create<WikiState>((set) => ({
 
   sourceWatchConfig: DEFAULT_SOURCE_WATCH_CONFIG,
 
-  // Default `enabled: true` preserves the pre-toggle behavior: anyone
-  // who already had `LLM_WIKI_API_TOKEN` set or `apiConfig.token`
-  // hand-edited keeps their working API. New users land in
-  // "enabled + no token = 401 on every endpoint" — fail-closed by
-  // virtue of the token being empty.
+  // Default `enabled: false` — port :19828 stays stealth unless the user
+  // explicitly enables API Server in Settings or sets COCOCAT_DEV_API=1.
   apiConfig: {
-    enabled: true,
+    enabled: false,
     allowUnauthenticated: false,
     token: "",
   },

@@ -7,8 +7,8 @@ use tiny_http::Server;
 
 mod infra;
 mod routing;
-mod projects;
-mod files;
+pub(crate) mod projects;
+pub(crate) mod files;
 mod search;
 mod graph;
 mod rescan;
@@ -27,6 +27,7 @@ pub fn get_api_status() -> &'static str {
         0 => "starting",
         1 => "running",
         2 => "port_conflict",
+        4 => "disabled",
         _ => "error",
     }
 }
@@ -36,7 +37,16 @@ pub fn invalidate_config_cache() {
 }
 
 pub fn start_api_server(app: AppHandle) {
-    thread::spawn(move || loop {
+    thread::spawn(move || {
+        if !should_bind_api_server(&app) {
+            API_STATUS.store(4, Ordering::Relaxed);
+            eprintln!(
+                "[Wiki API] Stealth mode — port :{PORT} not bound (enable Settings › API Server or COCOCAT_DEV_API=1)"
+            );
+            return;
+        }
+
+        loop {
         API_STATUS.store(0, Ordering::Relaxed);
         let server = match bind_server_with_retry() {
             Some(server) => server,
@@ -76,7 +86,18 @@ pub fn start_api_server(app: AppHandle) {
         API_STATUS.store(3, Ordering::Relaxed);
         eprintln!("[API Server] server loop exited; restarting");
         thread::sleep(Duration::from_secs(BIND_RETRY_DELAY_SECS));
+        }
     });
+}
+
+fn should_bind_api_server(app: &AppHandle) -> bool {
+    if std::env::var("COCOCAT_DEV_API")
+        .map(|v| v.trim() == "1")
+        .unwrap_or(false)
+    {
+        return true;
+    }
+    infra::api_enabled(app)
 }
 
 fn bind_server_with_retry() -> Option<Server> {

@@ -1,4 +1,6 @@
 //! Long-lived Node Agent worker — framed stdio JSON-RPC with serialized requests.
+//! Supports bidirectional RPC: Node may emit upstream `direction:"request"` frames
+//! on stdout during nested work (e.g. wiki search) answered on stdin.
 
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
@@ -12,13 +14,14 @@ use serde_json::{json, Value};
 use tokio::sync::Mutex as AsyncMutex;
 
 use crate::stack;
+use crate::wiki_internal;
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
 const WORKER_WARMUP: Duration = Duration::from_millis(150);
 
 struct WorkerInner {
     child: Child,
-    stdin: Mutex<std::process::ChildStdin>,
+    stdin: Arc<Mutex<std::process::ChildStdin>>,
     pending: Arc<Mutex<HashMap<u64, std::sync::mpsc::Sender<Result<Value, String>>>>>,
     next_id: AtomicU64,
 }
@@ -57,9 +60,43 @@ fn resolve_node_binary() -> String {
         .unwrap_or_else(|| "node".to_string())
 }
 
+fn write_upstream_response(
+    stdin: &Arc<Mutex<std::process::ChildStdin>>,
+    id: u64,
+    result: Value,
+    error: Option<String>,
+) {
+    let line = json!({
+        "id": id,
+        "result": result,
+        "error": error,
+    })
+    .to_string()
+        + "\n";
+    if let Ok(mut guard) = stdin.lock() {
+        let _ = guard.write_all(line.as_bytes());
+        let _ = guard.flush();
+    }
+}
+
+fn handle_upstream_request(
+    parsed: &Value,
+    stdin: &Arc<Mutex<std::process::ChildStdin>>,
+) {
+    let id = parsed.get("id").and_then(|v| v.as_u64()).unwrap_or(0);
+    let method = parsed
+        .get("method")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let params = parsed.get("params").cloned().unwrap_or(Value::Null);
+    let (result, error) = wiki_internal::handle_upstream(method, params);
+    write_upstream_response(stdin, id, result, error);
+}
+
 fn read_stdout_loop(
     stdout: std::process::ChildStdout,
     pending: Arc<Mutex<HashMap<u64, std::sync::mpsc::Sender<Result<Value, String>>>>>,
+    stdin: Arc<Mutex<std::process::ChildStdin>>,
 ) {
     let mut reader = BufReader::new(stdout);
     let mut line = String::new();
@@ -79,6 +116,12 @@ fn read_stdout_loop(
                         continue;
                     }
                 };
+
+                if parsed.get("direction").and_then(|v| v.as_str()) == Some("request") {
+                    handle_upstream_request(&parsed, &stdin);
+                    continue;
+                }
+
                 let Some(id) = parsed.get("id").and_then(|v| v.as_u64()) else {
                     eprintln!("[agent-worker] response missing id: {trimmed}");
                     continue;
@@ -139,6 +182,7 @@ fn spawn_worker_locked(state: &mut AgentWorkerState) -> Result<(), String> {
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit())
         .env("COCOCAT_REPO_ROOT", repo.to_string_lossy().to_string())
+        .env("COCOCAT_WIKI_INTERNAL", "1")
         .env("PATH", stack::node_path_env())
         .spawn()
         .map_err(|e| format!("Failed to spawn Agent worker ({node}): {e}"))?;
@@ -151,15 +195,17 @@ fn spawn_worker_locked(state: &mut AgentWorkerState) -> Result<(), String> {
         .stdin
         .take()
         .ok_or("Failed to capture worker stdin")?;
+    let stdin = Arc::new(Mutex::new(stdin));
 
     let pending: Arc<Mutex<HashMap<u64, std::sync::mpsc::Sender<Result<Value, String>>>>> =
         Arc::new(Mutex::new(HashMap::new()));
     let pending_reader = pending.clone();
-    std::thread::spawn(move || read_stdout_loop(stdout, pending_reader));
+    let stdin_reader = stdin.clone();
+    std::thread::spawn(move || read_stdout_loop(stdout, pending_reader, stdin_reader));
 
     state.inner = Some(WorkerInner {
         child,
-        stdin: Mutex::new(stdin),
+        stdin,
         pending,
         next_id: AtomicU64::new(0),
     });
@@ -200,10 +246,7 @@ pub fn shutdown() {
     }
 }
 
-fn dispatch_request_sync(
-    method: &str,
-    params: Value,
-) -> Result<Value, String> {
+fn dispatch_request_sync(method: &str, params: Value) -> Result<Value, String> {
     ensure_spawned()?;
 
     let mut state = WORKER_STATE

@@ -10,7 +10,7 @@ use super::infra;
 use super::routing::{ApiResponse, ok};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(super) struct ProjectEntry {
+pub(crate) struct ProjectEntry {
     pub id: String,
     pub name: String,
     pub path: String,
@@ -27,7 +27,7 @@ pub(super) fn handle_projects(app: &AppHandle) -> ApiResponse {
     }))
 }
 
-pub(super) fn load_projects(app: &AppHandle) -> Vec<ProjectEntry> {
+pub(crate) fn load_projects(app: &AppHandle) -> Vec<ProjectEntry> {
     let current = String::new();
     let mut by_path: BTreeMap<String, ProjectEntry> = BTreeMap::new();
 
@@ -96,7 +96,7 @@ pub(super) fn load_projects(app: &AppHandle) -> Vec<ProjectEntry> {
     by_path.into_values().collect()
 }
 
-pub(super) fn resolve_project(app: &AppHandle, project_id: &str) -> Result<ProjectEntry, String> {
+pub(crate) fn resolve_project(app: &AppHandle, project_id: &str) -> Result<ProjectEntry, String> {
     let project_id = infra::percent_decode(project_id);
     let wants_current = project_id.eq_ignore_ascii_case("current");
     load_projects(app)

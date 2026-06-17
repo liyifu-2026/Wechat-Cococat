@@ -908,6 +908,179 @@ fn file_stem(path: &str) -> String {
         .to_string()
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FederatedProjectSpec {
+    pub project_path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_name: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FederatedSearchResultItem {
+    pub path: String,
+    pub title: String,
+    pub snippet: String,
+    pub title_match: bool,
+    pub score: f64,
+    pub rrf_score: f64,
+    pub project_path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_name: Option<String>,
+    pub library_rank: u32,
+    pub raw_score: f64,
+    pub rel_path: String,
+    pub images: Vec<SearchImageRef>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content: Option<String>,
+}
+
+fn rel_path_for_project(project_path: &str, absolute_path: &str) -> String {
+    let root = normalize_path(project_path).trim_end_matches('/').to_string();
+    let full = normalize_path(absolute_path);
+    if full.starts_with(&format!("{root}/")) {
+        return full[root.len() + 1..].to_string();
+    }
+    full
+}
+
+fn fuse_federated_rrf(
+    libraries: Vec<(String, Option<String>, Vec<ProjectSearchResult>)>,
+    k: f64,
+) -> Vec<FederatedSearchResultItem> {
+    struct MergeEntry {
+        rrf_score: f64,
+        result: ProjectSearchResult,
+        project_path: String,
+        project_name: Option<String>,
+        library_rank: u32,
+    }
+
+    let mut merged: BTreeMap<String, MergeEntry> = BTreeMap::new();
+
+    for (project_path, project_name, results) in libraries {
+        let project_path = normalize_path(&project_path);
+        for (index, result) in results.iter().enumerate() {
+            let rank = index + 1;
+            let contribution = 1.0 / (k + rank as f64);
+            let key = normalize_path(&result.path);
+            if let Some(existing) = merged.get_mut(&key) {
+                existing.rrf_score += contribution;
+                continue;
+            }
+            merged.insert(
+                key,
+                MergeEntry {
+                    rrf_score: contribution,
+                    result: result.clone(),
+                    project_path: project_path.clone(),
+                    project_name: project_name.clone(),
+                    library_rank: rank as u32,
+                },
+            );
+        }
+    }
+
+    let mut out: Vec<FederatedSearchResultItem> = merged
+        .into_values()
+        .map(
+            |MergeEntry {
+                 rrf_score,
+                 result,
+                 project_path,
+                 project_name,
+                 library_rank,
+             }| {
+                let raw_score = result.score;
+                FederatedSearchResultItem {
+                    rel_path: rel_path_for_project(&project_path, &result.path),
+                    path: result.path,
+                    title: result.title,
+                    snippet: result.snippet,
+                    title_match: result.title_match,
+                    score: rrf_score,
+                    rrf_score,
+                    project_path,
+                    project_name,
+                    library_rank,
+                    raw_score,
+                    images: result.images,
+                    content: result.content,
+                }
+            },
+        )
+        .collect();
+
+    out.sort_by(|a, b| {
+        b.rrf_score
+            .partial_cmp(&a.rrf_score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.path.cmp(&b.path))
+    });
+    out
+}
+
+pub async fn search_federated_inner(
+    projects: Vec<FederatedProjectSpec>,
+    query: String,
+    top_k: usize,
+    include_content: bool,
+) -> Result<Vec<FederatedSearchResultItem>, String> {
+    let trimmed = query.trim();
+    if trimmed.is_empty() || projects.is_empty() {
+        return Ok(vec![]);
+    }
+
+    let limit = top_k.clamp(1, MAX_RESULTS);
+
+    if projects.len() == 1 {
+        let only = &projects[0];
+        let response = search_project_inner(
+            only.project_path.clone(),
+            trimmed.to_string(),
+            limit,
+            include_content,
+            None,
+        )
+        .await?;
+        return Ok(fuse_federated_rrf(
+            vec![(
+                only.project_path.clone(),
+                only.project_name.clone(),
+                response.results,
+            )],
+            RRF_K,
+        )
+        .into_iter()
+        .take(limit)
+        .collect());
+    }
+
+    let per_library = (limit + projects.len() - 1) / projects.len();
+    let mut libraries = Vec::with_capacity(projects.len());
+    for project in &projects {
+        let response = search_project_inner(
+            project.project_path.clone(),
+            trimmed.to_string(),
+            per_library.max(1),
+            include_content,
+            None,
+        )
+        .await?;
+        libraries.push((
+            project.project_path.clone(),
+            project.project_name.clone(),
+            response.results,
+        ));
+    }
+
+    Ok(fuse_federated_rrf(libraries, RRF_K)
+        .into_iter()
+        .take(limit)
+        .collect())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

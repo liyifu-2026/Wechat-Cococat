@@ -1,6 +1,7 @@
 mod agent_config;
 mod agent_worker;
 mod preview_reply;
+mod wiki_internal;
 mod api_server;
 mod commands;
 mod panic_guard;
@@ -82,6 +83,7 @@ pub fn run() {
                 eprintln!("[proxy] could not resolve app_data_dir");
             }
             app.manage(commands::file_sync::FileSyncState::default());
+            wiki_internal::init(app.handle().clone());
             std::thread::spawn(|| {
                 if let Err(err) = agent_worker::ensure_spawned() {
                     eprintln!("[agent-worker] warmup skipped: {err}");
