@@ -29,7 +29,7 @@ export function OutputSection({ draft, setDraft }: Props) {
         <select
           value={draft.outputLanguage}
           onChange={(e) => setDraft("outputLanguage", e.target.value)}
-          className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+          className="wx-themed-select w-full rounded-md border border-input px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
         >
           {LANGUAGE_OPTIONS.map((l) => (
             <option key={l.value} value={l.value}>

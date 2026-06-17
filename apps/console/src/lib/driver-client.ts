@@ -193,7 +193,10 @@ export async function fetchDriverMessagesAround(
   const res = await driverFetch(
     `/api/messages/${encodeURIComponent(chatId)}/around/${localId}?limit=${limit}`,
   )
-  if (!res.ok) throw new Error(`messages around HTTP ${res.status}`)
+  if (!res.ok) {
+    const detail = (await res.text()).trim()
+    throw new Error(detail || `messages around HTTP ${res.status}`)
+  }
   return res.json<DriverMessage[]>()
 }
 

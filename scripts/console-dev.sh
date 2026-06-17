@@ -14,4 +14,5 @@ export PROTOC="$PROTOC_ROOT/bin/protoc"
 export PROTOC_INCLUDE="$PROTOC_ROOT/include"
 
 cd "$REPO_ROOT"
+pnpm --filter @cococat/shared build
 exec pnpm --filter @cococat/console tauri dev "$@"

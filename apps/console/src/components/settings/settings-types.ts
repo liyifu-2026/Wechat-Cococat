@@ -34,19 +34,6 @@ export interface SettingsDraft {
   /** Extra HTTP headers to send on every embedding request. Empty = none. */
   embeddingExtraHeaders: Record<string, string>
 
-  // Multimodal (image captioning at ingest time)
-  multimodalEnabled: boolean
-  multimodalUseMainLlm: boolean
-  multimodalProvider: "openai" | "anthropic" | "google" | "azure" | "ollama" | "custom" | "minimax" | "claude-code" | "codex-cli"
-  multimodalApiKey: string
-  multimodalModel: string
-  multimodalOllamaUrl: string
-  multimodalCustomEndpoint: string
-  multimodalAzureApiVersion: string
-  multimodalAzureModelFamily: AzureModelFamily
-  multimodalApiMode: CustomApiMode | undefined
-  multimodalConcurrency: number
-
   // Output preferences
   outputLanguage: string
   maxHistoryMessages: number

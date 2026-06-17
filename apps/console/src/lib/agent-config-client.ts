@@ -46,6 +46,17 @@ export function writeAgentChatFile(
   })
 }
 
+/** Atomically create chat dir + meta.json (if new) + wiki.json. See M2-console-P1 spec. */
+export function ensureAndBindAgentChatDir(
+  chatId: string,
+  wikiJsonContent: string,
+): Promise<string> {
+  return invoke<string>("ensure_and_bind_agent_chat_dir", {
+    chatId,
+    wikiJsonContent,
+  })
+}
+
 export function readMemoryPersona(chatId: string): Promise<string> {
   return invoke<string>("read_memory_persona", { chatId })
 }
@@ -80,6 +91,32 @@ export function listEscalationMutes(): Promise<EscalationMuteEntry[]> {
 
 export function unmuteEscalationChat(chatId: string): Promise<boolean> {
   return invoke<boolean>("unmute_escalation_chat", { chatId })
+}
+
+export function muteEscalationChat(input: {
+  chatId: string
+  chatName: string
+  reason: "escalate_a" | "manual" | "probe_b"
+  hours?: number
+}): Promise<boolean> {
+  return invoke<boolean>("mute_escalation_chat", {
+    chatId: input.chatId,
+    chatName: input.chatName,
+    reason: input.reason,
+    hours: input.hours,
+  })
+}
+
+/** Per-chat Agent 代发开关（style.json agentProxyEnabled；缺省 true）。 */
+export function readChatAgentProxyEnabled(chatId: string): Promise<boolean> {
+  return invoke<boolean>("read_chat_agent_proxy_enabled", { chatId })
+}
+
+export function setChatAgentProxyEnabled(
+  chatId: string,
+  enabled: boolean,
+): Promise<void> {
+  return invoke<void>("set_chat_agent_proxy_enabled", { chatId, enabled })
 }
 
 export type ChatMemorySummary = {

@@ -1,5 +1,7 @@
 # [M2 · P0] 维护者 Ops：Wiki 嗅探（`搜` / `scope`）— 控制面双模式
 
+> **Archival：** 设计不变量见 [`M2-ARCHIVE.md`](./M2-ARCHIVE.md) — 零 LLM、零 Token 幻觉、严禁客服腔。
+
 **类型：** Feature · Maintainer Ops  
 **优先级：** P0  
 **依赖：** M1 已合入（纯指令控制面、`agent-scope` 快照、Wiki auto-bind）  

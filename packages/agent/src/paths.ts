@@ -8,46 +8,63 @@ import {
 
 export { encodeChatDir };
 
-export const CONFIG_DIR = getCococatConfigDir();
-export const DATA_DIR = getCococatDataRoot();
+/** Resolve on each call so tests can swap COCOCAT_*_DIR at runtime. */
+export function dataDir(): string {
+  return getCococatDataRoot();
+}
 
-export const STACK_DIR = join(DATA_DIR, "stack");
+export function configDir(): string {
+  return getCococatConfigDir();
+}
+
+export function stackDir(): string {
+  return join(dataDir(), "stack");
+}
 
 export function configPath(filename: string): string {
-  mkdirSync(CONFIG_DIR, { recursive: true });
-  return join(CONFIG_DIR, filename);
+  const dir = configDir();
+  mkdirSync(dir, { recursive: true });
+  return join(dir, filename);
 }
 
 export function resolveConfigPath(filename: string): string {
-  const primary = join(CONFIG_DIR, filename);
+  const primary = join(configDir(), filename);
   if (existsSync(primary)) return primary;
   return primary;
 }
 
 export function chatsRootDir(): string {
-  return join(DATA_DIR, "chats");
+  return join(dataDir(), "chats");
 }
 
 export function ensureChatsRoot(): string {
-  const dir = join(DATA_DIR, "chats");
+  const dir = chatsRootDir();
   mkdirSync(dir, { recursive: true });
   return dir;
 }
 
 export function memoryDataDir(): string {
-  const dir = join(DATA_DIR, "memory");
+  const dir = join(dataDir(), "memory");
   mkdirSync(dir, { recursive: true });
   return dir;
 }
 
 /** Per-chat dir under canonical data root. */
 export function chatDirPath(chatId: string): string {
-  return join(DATA_DIR, "chats", encodeChatDir(chatId));
+  return join(dataDir(), "chats", encodeChatDir(chatId));
 }
 
-export const GLOBAL_PERSONA_PATH = resolveConfigPath("persona.md");
-export const WIKI_REGISTRY_PATH = resolveConfigPath("wiki-registry.json");
-export const WIKI_DEFAULT_PATH = resolveConfigPath("wiki-default.json");
+export function globalPersonaPath(): string {
+  return resolveConfigPath("persona.md");
+}
+
+export function wikiRegistryPath(): string {
+  return resolveConfigPath("wiki-registry.json");
+}
+
+export function wikiDefaultPath(): string {
+  return resolveConfigPath("wiki-default.json");
+}
 
 /** @deprecated use memoryDataDir() */
 export const TENCENTDB_DATA_DIR = memoryDataDir();

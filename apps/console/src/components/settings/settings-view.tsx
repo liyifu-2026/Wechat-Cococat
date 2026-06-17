@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useState, lazy, Suspense } from "react"
 import {
   Bot,
   Binary,
@@ -6,14 +6,12 @@ import {
   Languages,
   Palette,
   Info,
-  Image as ImageIcon,
   Network,
   Wrench,
   Clock,
   FolderSync,
   Server,
   Cat,
-  MessageCircle,
   Search,
 } from "lucide-react"
 import { useTranslation } from "react-i18next"
@@ -36,9 +34,7 @@ import {
 } from "@/lib/console-layout"
 import type { SettingsDraft, DraftSetter } from "./settings-types"
 import { normalizeSourceWatchConfig } from "@/lib/source-watch-config"
-import { LlmProviderSection } from "./sections/llm-provider-section"
 import { EmbeddingSection } from "./sections/embedding-section"
-import { MultimodalSection } from "./sections/multimodal-section"
 import { WebSearchSection } from "./sections/web-search-section"
 import { OutputSection } from "./sections/output-section"
 import { InterfaceSection } from "./sections/interface-section"
@@ -49,14 +45,15 @@ import { ApiServerSection } from "./sections/api-server-section"
 import { MaintenanceSection } from "./sections/maintenance-section"
 import { AboutSection } from "./sections/about-section"
 import { CococatSettingsSection } from "./sections/cococat-settings-section"
-import { AgentLlmSection } from "./sections/agent-llm-section"
 
-type CategoryId =
-  | "agent-llm"
+const LlmConfigView = lazy(() =>
+  import("./llm-config/llm-config-view").then((m) => ({ default: m.LlmConfigView })),
+)
+
+export type SettingsCategoryId =
+  | "llm-config"
   | "cococat"
-  | "llm"
   | "embedding"
-  | "multimodal"
   | "web-search"
   | "network"
   | "source-watch"
@@ -66,6 +63,8 @@ type CategoryId =
   | "interface"
   | "maintenance"
   | "about"
+
+type CategoryId = SettingsCategoryId
 
 interface CategoryMeta {
   id: CategoryId
@@ -77,11 +76,11 @@ interface CategoryMeta {
 
 const CATEGORY_META: CategoryMeta[] = [
   {
-    id: "agent-llm",
-    labelKey: "settings.categories.agentLlm",
-    icon: MessageCircle,
+    id: "llm-config",
+    labelKey: "settings.categories.llmConfig",
+    icon: Bot,
     group: "cococat",
-    searchKeywords: ["wechat", "agent", "pi", "mimo", "微信", "回复", "model"],
+    searchKeywords: ["llm", "model", "mimo", "api", "agent", "wiki", "模型", "厂商", "caption", "图片描述", "ingest"],
   },
   {
     id: "cococat",
@@ -91,25 +90,11 @@ const CATEGORY_META: CategoryMeta[] = [
     searchKeywords: ["token", "path", "driver", "agent", "memory"],
   },
   {
-    id: "llm",
-    labelKey: "settings.categories.llm",
-    icon: Bot,
-    group: "wiki",
-    searchKeywords: ["deepseek", "openai", "anthropic", "api", "model", "wiki"],
-  },
-  {
     id: "embedding",
     labelKey: "settings.categories.embedding",
     icon: Binary,
     group: "wiki",
     searchKeywords: ["vector", "gemini"],
-  },
-  {
-    id: "multimodal",
-    labelKey: "settings.categories.multimodal",
-    icon: ImageIcon,
-    group: "wiki",
-    searchKeywords: ["vision", "caption", "image"],
   },
   {
     id: "web-search",
@@ -179,19 +164,25 @@ const CATEGORY_META: CategoryMeta[] = [
 const ALL_CATEGORY_IDS = CATEGORY_META.map((c) => c.id)
 
 const GROUP_DEFAULT_CATEGORY: Record<SettingsGroup, CategoryId> = {
-  cococat: "agent-llm",
-  wiki: "llm",
+  cococat: "cococat",
+  wiki: "embedding",
   system: "interface",
 }
 
-function categoriesForGroup(group: SettingsGroup): CategoryMeta[] {
-  return CATEGORY_META.filter((c) => c.group === group)
+function categoriesForGroup(
+  group: SettingsGroup,
+  opts?: { hideLlmConfig?: boolean },
+): CategoryMeta[] {
+  const inGroup = CATEGORY_META.filter((c) => c.group === group)
+  if (opts?.hideLlmConfig) {
+    return inGroup.filter((c) => c.id !== "llm-config")
+  }
+  return inGroup
 }
 
 function initialDraft(
   llm: ReturnType<typeof useWikiStore.getState>["llmConfig"],
   embed: ReturnType<typeof useWikiStore.getState>["embeddingConfig"],
-  multimodal: ReturnType<typeof useWikiStore.getState>["multimodalConfig"],
   outputLanguage: ReturnType<typeof useWikiStore.getState>["outputLanguage"],
   proxy: ReturnType<typeof useWikiStore.getState>["proxyConfig"],
   scheduledImport: ReturnType<typeof useWikiStore.getState>["scheduledImportConfig"],
@@ -232,17 +223,6 @@ function initialDraft(
     embeddingMaxChunkChars: embed.maxChunkChars,
     embeddingOverlapChunkChars: embed.overlapChunkChars,
     embeddingExtraHeaders: embed.extraHeaders ?? {},
-    multimodalEnabled: multimodal.enabled,
-    multimodalUseMainLlm: multimodal.useMainLlm,
-    multimodalProvider: multimodal.provider,
-    multimodalApiKey: multimodal.apiKey,
-    multimodalModel: multimodal.model,
-    multimodalOllamaUrl: multimodal.ollamaUrl,
-    multimodalCustomEndpoint: multimodal.customEndpoint,
-    multimodalAzureApiVersion: multimodal.azureApiVersion ?? "2024-10-21",
-    multimodalAzureModelFamily: multimodal.azureModelFamily ?? "auto",
-    multimodalApiMode: multimodal.apiMode,
-    multimodalConcurrency: multimodal.concurrency,
     outputLanguage,
     maxHistoryMessages,
     proxyEnabled: proxy.enabled,
@@ -263,12 +243,18 @@ type SettingsViewProps = {
   embedded?: boolean
   lockedGroup?: SettingsGroup
   hideHeader?: boolean
+  forcedCategory?: CategoryId
+  hideSidebar?: boolean
+  hideGroupTabs?: boolean
 }
 
 export function SettingsView({
   embedded = false,
   lockedGroup,
   hideHeader = false,
+  forcedCategory,
+  hideSidebar = false,
+  hideGroupTabs = false,
 }: SettingsViewProps = {}) {
   const { t } = useTranslation()
   const consumePendingSettingsNavigation = useConsoleStore(
@@ -279,8 +265,6 @@ export function SettingsView({
   const setLlmConfig = useWikiStore((s) => s.setLlmConfig)
   const embeddingConfig = useWikiStore((s) => s.embeddingConfig)
   const setEmbeddingConfig = useWikiStore((s) => s.setEmbeddingConfig)
-  const multimodalConfig = useWikiStore((s) => s.multimodalConfig)
-  const setMultimodalConfig = useWikiStore((s) => s.setMultimodalConfig)
   const outputLanguage = useWikiStore((s) => s.outputLanguage)
   const setOutputLanguage = useWikiStore((s) => s.setOutputLanguage)
   const proxyConfig = useWikiStore((s) => s.proxyConfig)
@@ -295,7 +279,7 @@ export function SettingsView({
   const setMaxHistoryMessages = useChatStore((s) => s.setMaxHistoryMessages)
 
   const [activeCategory, setActiveCategory] = useState<CategoryId>(() =>
-    loadStoredTab(LAYOUT_KEYS.settingsCategory, ALL_CATEGORY_IDS, "agent-llm"),
+    loadStoredTab(LAYOUT_KEYS.settingsCategory, ALL_CATEGORY_IDS, "cococat"),
   )
 
   const initialGroup = useMemo(() => {
@@ -318,7 +302,6 @@ export function SettingsView({
     initialDraft(
       llmConfig,
       embeddingConfig,
-      multimodalConfig,
       outputLanguage,
       proxyConfig,
       scheduledImportConfig,
@@ -340,13 +323,25 @@ export function SettingsView({
   }, [activeGroup, setActiveGroup])
 
   useEffect(() => {
-    const inGroup = categoriesForGroup(activeGroup).some((c) => c.id === activeCategory)
+    if (!forcedCategory) return
+    setActiveCategory(forcedCategory)
+    saveStoredTab(LAYOUT_KEYS.settingsCategory, forcedCategory)
+    const meta = CATEGORY_META.find((c) => c.id === forcedCategory)
+    if (meta && meta.group !== activeGroup) {
+      setActiveGroup(meta.group)
+    }
+  }, [forcedCategory, activeGroup, setActiveGroup])
+
+  useEffect(() => {
+    const inGroup = categoriesForGroup(activeGroup, {
+      hideLlmConfig: !!lockedGroup,
+    }).some((c) => c.id === activeCategory)
     if (!inGroup) {
       const fallback = GROUP_DEFAULT_CATEGORY[activeGroup]
       setActiveCategory(fallback)
       saveStoredTab(LAYOUT_KEYS.settingsCategory, fallback)
     }
-  }, [activeGroup, activeCategory])
+  }, [activeGroup, activeCategory, lockedGroup])
 
   useEffect(() => {
     const { group, category } = consumePendingSettingsNavigation()
@@ -380,7 +375,6 @@ export function SettingsView({
       initialDraft(
         llmConfig,
         embeddingConfig,
-        multimodalConfig,
         outputLanguage,
         proxyConfig,
         scheduledImportConfig,
@@ -394,7 +388,6 @@ export function SettingsView({
   }, [
     llmConfig,
     embeddingConfig,
-    multimodalConfig,
     outputLanguage,
     proxyConfig,
     scheduledImportConfig,
@@ -412,7 +405,6 @@ export function SettingsView({
     const {
       saveLlmConfig,
       saveEmbeddingConfig,
-      saveMultimodalConfig,
       saveOutputLanguage,
       saveProxyConfig,
       saveScheduledImportConfig,
@@ -442,24 +434,6 @@ export function SettingsView({
       overlapChunkChars: draft.embeddingOverlapChunkChars,
       extraHeaders: draft.embeddingExtraHeaders,
     }
-    const newMultimodal = {
-      enabled: draft.multimodalEnabled,
-      useMainLlm: draft.multimodalUseMainLlm,
-      provider: draft.multimodalProvider,
-      apiKey: draft.multimodalApiKey,
-      model: draft.multimodalModel,
-      ollamaUrl: draft.multimodalOllamaUrl,
-      customEndpoint: draft.multimodalCustomEndpoint,
-      azureApiVersion:
-        draft.multimodalProvider === "azure"
-          ? draft.multimodalAzureApiVersion.trim()
-          : undefined,
-      azureModelFamily:
-        draft.multimodalProvider === "azure" ? draft.multimodalAzureModelFamily : undefined,
-      apiMode: draft.multimodalProvider === "custom" ? draft.multimodalApiMode : undefined,
-      concurrency: Math.max(1, Math.min(16, draft.multimodalConcurrency || 4)),
-    }
-
     const newProxy = {
       enabled: draft.proxyEnabled,
       url: draft.proxyUrl.trim(),
@@ -470,8 +444,6 @@ export function SettingsView({
     await saveLlmConfig(newLlm)
     setEmbeddingConfig(newEmbed)
     await saveEmbeddingConfig(newEmbed)
-    setMultimodalConfig(newMultimodal)
-    await saveMultimodalConfig(newMultimodal)
     setOutputLanguage(draft.outputLanguage as typeof outputLanguage)
     await saveOutputLanguage(draft.outputLanguage as typeof outputLanguage, project?.id)
     setProxyConfig(newProxy)
@@ -555,16 +527,20 @@ export function SettingsView({
 
   const body = useMemo(() => {
     switch (activeCategory) {
-      case "agent-llm":
-        return <AgentLlmSection />
+      case "llm-config":
+        return (
+          <Suspense
+            fallback={
+              <div className="text-sm text-muted-foreground">Loading…</div>
+            }
+          >
+            <LlmConfigView embedded={embedded} />
+          </Suspense>
+        )
       case "cococat":
         return <CococatSettingsSection />
-      case "llm":
-        return <LlmProviderSection />
       case "embedding":
         return <EmbeddingSection draft={draft} setDraft={setDraft} />
-      case "multimodal":
-        return <MultimodalSection draft={draft} setDraft={setDraft} />
       case "web-search":
         return <WebSearchSection />
       case "network":
@@ -589,11 +565,19 @@ export function SettingsView({
         return <MaintenanceSection />
       case "about":
         return <AboutSection />
+      default:
+        return (
+          <Suspense fallback={<div className="text-sm text-muted-foreground">Loading…</div>}>
+            <LlmConfigView embedded={embedded} />
+          </Suspense>
+        )
     }
   }, [activeCategory, draft, setDraft, project])
 
   const visibleCategories = useMemo(() => {
-    const groupCats = categoriesForGroup(activeGroup)
+    const groupCats = categoriesForGroup(activeGroup, {
+      hideLlmConfig: !!lockedGroup,
+    })
     const q = searchQuery.trim().toLowerCase()
     if (!q) return groupCats
     return groupCats.filter((c) => {
@@ -615,8 +599,7 @@ export function SettingsView({
 
   const showSaveBar =
     activeCategory !== "about" &&
-    activeCategory !== "llm" &&
-    activeCategory !== "agent-llm" &&
+    activeCategory !== "llm-config" &&
     activeCategory !== "cococat"
 
   return (
@@ -636,7 +619,7 @@ export function SettingsView({
         </header>
       )}
 
-      {!lockedGroup && (
+      {!lockedGroup && !hideGroupTabs && (
         <ModuleTabs
           tabs={groupTabs}
           active={activeGroup}
@@ -646,7 +629,8 @@ export function SettingsView({
       )}
 
       <div className="flex min-h-0 flex-1 overflow-hidden">
-        <aside className="flex w-56 shrink-0 flex-col border-r bg-muted/30">
+        {!hideSidebar && (
+        <aside className="flex min-h-0 w-56 shrink-0 flex-col overflow-hidden border-r bg-muted/30">
           <div className="px-3 pb-2 pt-3">
             <div className="relative">
               <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
@@ -658,7 +642,7 @@ export function SettingsView({
               />
             </div>
           </div>
-          <nav className="flex-1 overflow-y-auto px-2 pb-3">
+          <nav className="console-scroll-container min-h-0 flex-1 overflow-y-auto px-2 pb-3">
             {visibleCategories.length === 0 ? (
               <p className="px-2 py-2 text-xs text-muted-foreground">
                 {t("settings.searchEmpty")}
@@ -693,9 +677,10 @@ export function SettingsView({
             )}
           </nav>
         </aside>
+        )}
 
-        <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
-          <div className="flex-1 overflow-y-auto px-8 py-6">
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+          <div className="console-scroll-container min-h-0 flex-1 overflow-y-auto px-8 py-6">
             <div className="mx-auto max-w-2xl">{body}</div>
           </div>
 

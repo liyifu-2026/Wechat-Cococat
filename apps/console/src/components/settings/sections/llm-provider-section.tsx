@@ -102,7 +102,11 @@ export interface LlmPresetRowProps {
   onToggleExpand: () => void
   onChange: (patch: ProviderOverride) => void
   toggleDisabled?: boolean
+  hideActiveToggle?: boolean
+  /** 厂商库模式：只填 Key/Endpoint，模型在用途分配里选 */
+  credentialsOnly?: boolean
   activeBadgeKey?: string
+  onRemove?: () => void
 }
 
 type ProviderTestState =
@@ -120,7 +124,10 @@ export function LlmPresetRow({
   onToggleExpand,
   onChange,
   toggleDisabled = false,
+  hideActiveToggle = false,
+  credentialsOnly = false,
   activeBadgeKey = "settings.sections.llm.activeBadge",
+  onRemove,
 }: LlmPresetRowProps) {
   const { t } = useTranslation()
   const ov = override ?? {}
@@ -210,6 +217,7 @@ export function LlmPresetRow({
         </button>
 
         {/* Toggle switch */}
+        {!hideActiveToggle && (
         <button
           type="button"
           onClick={toggleDisabled ? undefined : onToggleActive}
@@ -236,6 +244,7 @@ export function LlmPresetRow({
             }`}
           />
         </button>
+        )}
       </div>
 
       {/* Expanded config panel */}
@@ -306,7 +315,7 @@ export function LlmPresetRow({
               <div className="space-y-2">
                 <Label>{t("settings.sections.llm.azureModelFamily")}</Label>
                 <select
-                  className="w-full rounded-md border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                  className="wx-themed-select w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
                   value={azureModelFamily}
                   onChange={(e) => onChange({ azureModelFamily: e.target.value as typeof azureModelFamily })}
                 >
@@ -339,32 +348,42 @@ export function LlmPresetRow({
             </div>
           )}
 
-          <div className="space-y-2">
-            <Label>
-              {preset.provider === "azure"
-                ? t("settings.sections.llm.deploymentName", "Deployment name")
-                : t("settings.model")}
-            </Label>
-            <ModelPicker
-              value={model}
-              suggestions={preset.suggestedModels ?? []}
-              placeholder={preset.defaultModel ?? "e.g. gpt-4o"}
-              onChange={(v) => onChange({ model: v })}
-            />
-          </div>
+          {!credentialsOnly && (
+            <>
+              <div className="space-y-2">
+                <Label>
+                  {preset.provider === "azure"
+                    ? t("settings.sections.llm.deploymentName", "Deployment name")
+                    : t("settings.model")}
+                </Label>
+                <ModelPicker
+                  value={model}
+                  suggestions={preset.suggestedModels ?? []}
+                  placeholder={preset.defaultModel ?? "e.g. gpt-4o"}
+                  onChange={(v) => onChange({ model: v })}
+                />
+              </div>
 
-          <div className="space-y-2">
-            <Label>{t("settings.sections.llm.contextWindow")}</Label>
-            <ContextSizeSelector
-              value={context}
-              onChange={(v) => onChange({ maxContextSize: v })}
-            />
-          </div>
+              <div className="space-y-2">
+                <Label>{t("settings.sections.llm.contextWindow")}</Label>
+                <ContextSizeSelector
+                  value={context}
+                  onChange={(v) => onChange({ maxContextSize: v })}
+                />
+              </div>
 
-          <ReasoningControls
-            value={reasoning}
-            onChange={(reasoning) => onChange({ reasoning })}
-          />
+              <ReasoningControls
+                value={reasoning}
+                onChange={(reasoning) => onChange({ reasoning })}
+              />
+            </>
+          )}
+
+          {credentialsOnly && (
+            <p className="text-xs text-muted-foreground">
+              {t("settings.sections.llmConfig.vaultModelHint")}
+            </p>
+          )}
 
           <div className="space-y-2 rounded-md border p-3">
             <div>
@@ -408,6 +427,17 @@ export function LlmPresetRow({
               </div>
             )}
           </div>
+          {onRemove && (
+            <div className="flex justify-end border-t pt-3">
+              <button
+                type="button"
+                onClick={onRemove}
+                className="text-xs text-muted-foreground hover:text-destructive"
+              >
+                {t("settings.sections.llmConfig.removeProvider")}
+              </button>
+            </div>
+          )}
         </div>
       )}
     </div>

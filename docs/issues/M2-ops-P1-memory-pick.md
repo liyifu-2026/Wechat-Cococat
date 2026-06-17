@@ -1,5 +1,7 @@
 # [M2 · P1] 维护者 Ops：`记忆` 查询 + `pick_memory` 重名消歧
 
+> **Archival：** 设计不变量见 [`M2-ARCHIVE.md`](./M2-ARCHIVE.md) — PII 铁律、pick_unmute 状态机平移、禁止 LLM 选 chat。
+
 **类型：** Feature · Maintainer Ops · Security-sensitive  
 **优先级：** P1（依赖 P0 Wiki 嗅探合入并稳定）  
 **依赖：** `M2-ops-P0-wiki-sniff`、Memory gateway 可用、`findChats` / `listAgentChats`  

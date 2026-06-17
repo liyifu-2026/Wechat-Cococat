@@ -16,6 +16,10 @@ export interface MessageReference {
   source?: string
   url?: string
   snippet?: string
+  /** Console-native wiki root for per-chat / federated references. */
+  projectPath?: string
+  relPath?: string
+  projectName?: string
 }
 
 export interface DisplayMessage {

@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { GLOBAL_PERSONA_PATH } from "./paths.js";
+import { globalPersonaPath } from "./paths.js";
 
 const CORE_HEADER = "## 核心性格";
 const MEMORY_HEADER = "## 相处记忆";
@@ -39,10 +39,10 @@ function wrapAsForkedPersona(globalContent: string): string {
 }
 
 export function readGlobalPersonaSeed(): string {
-  if (!existsSync(GLOBAL_PERSONA_PATH)) {
+  if (!existsSync(globalPersonaPath())) {
     return defaultPersonaTemplate();
   }
-  return readFileSync(GLOBAL_PERSONA_PATH, "utf8");
+  return readFileSync(globalPersonaPath(), "utf8");
 }
 
 export function forkPersonaTo(chatPersonaPath: string): void {
@@ -52,10 +52,10 @@ export function forkPersonaTo(chatPersonaPath: string): void {
   }
   if (existsSync(chatPersonaPath)) return;
 
-  if (existsSync(GLOBAL_PERSONA_PATH)) {
+  if (existsSync(globalPersonaPath())) {
     writeFileSync(
       chatPersonaPath,
-      wrapAsForkedPersona(readFileSync(GLOBAL_PERSONA_PATH, "utf8")),
+      wrapAsForkedPersona(readFileSync(globalPersonaPath(), "utf8")),
       "utf8",
     );
   } else {
@@ -67,10 +67,17 @@ export function readChatPersona(chatPersonaPath: string): string {
   if (existsSync(chatPersonaPath)) {
     return readFileSync(chatPersonaPath, "utf8").trim();
   }
-  if (existsSync(GLOBAL_PERSONA_PATH)) {
-    return readFileSync(GLOBAL_PERSONA_PATH, "utf8").trim();
+  if (existsSync(globalPersonaPath())) {
+    return readFileSync(globalPersonaPath(), "utf8").trim();
   }
   return defaultPersonaTemplate().trim();
+}
+
+/** 只读 ## 相处记忆 段（Ops 窥视用）。 */
+export function readPersonaMemorySection(chatPersonaPath: string): string {
+  if (!existsSync(chatPersonaPath)) return "";
+  const content = readFileSync(chatPersonaPath, "utf8");
+  return extractSection(content, MEMORY_HEADER);
 }
 
 /** L3 sync：只更新 ## 相处记忆 段。 */

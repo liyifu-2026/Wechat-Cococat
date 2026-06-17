@@ -25,6 +25,7 @@ import { resolveMarkdownImageSrc } from "@/lib/markdown-image-resolver"
 import { detectLanguage } from "@/lib/detect-language"
 import { getHtmlLang, getTextDirection } from "@/lib/language-metadata"
 import { parseFrontmatter } from "@/lib/frontmatter"
+import { preprocessWikilinks } from "@/lib/wiki-link-resolve"
 import { FrontmatterPanel } from "@/components/editor/frontmatter-panel"
 import { useWikiStore } from "@/stores/wiki-store"
 import { MermaidDiagram, unwrapMermaidPre } from "@/components/mermaid-diagram"
@@ -32,9 +33,17 @@ import { MermaidDiagram, unwrapMermaidPre } from "@/components/mermaid-diagram"
 interface FilePreviewProps {
   filePath: string
   textContent: string
+  /** When set, overrides global wiki store project for image/wikilink resolution. */
+  projectPathOverride?: string | null
+  onWikiLinkClick?: (pageName: string) => void
 }
 
-export function FilePreview({ filePath, textContent }: FilePreviewProps) {
+export function FilePreview({
+  filePath,
+  textContent,
+  projectPathOverride,
+  onWikiLinkClick,
+}: FilePreviewProps) {
   const category = getFileCategory(filePath)
   const fileName = getFileName(filePath)
 
@@ -51,6 +60,16 @@ export function FilePreview({ filePath, textContent }: FilePreviewProps) {
       return <CodePreview filePath={filePath} content={textContent} />
     case "data":
       return <CodePreview filePath={filePath} content={textContent} />
+    case "markdown":
+      return (
+        <TextPreview
+          filePath={filePath}
+          content={textContent}
+          label="Markdown"
+          projectPathOverride={projectPathOverride}
+          onWikiLinkClick={onWikiLinkClick}
+        />
+      )
     case "text":
       return <TextPreview filePath={filePath} content={textContent} label="Text" />
     case "document":
@@ -146,13 +165,30 @@ function CodePreview({ filePath, content }: { filePath: string; content: string 
   )
 }
 
-function TextPreview({ filePath, content, label }: { filePath: string; content: string; label: string }) {
-  const projectPath = useWikiStore((s) => s.project?.path ?? null)
+function TextPreview({
+  filePath,
+  content,
+  label,
+  projectPathOverride,
+  onWikiLinkClick,
+}: {
+  filePath: string
+  content: string
+  label: string
+  projectPathOverride?: string | null
+  onWikiLinkClick?: (pageName: string) => void
+}) {
+  const storeProjectPath = useWikiStore((s) => s.project?.path ?? null)
+  const projectPath = projectPathOverride ?? storeProjectPath
   const pendingScrollImageSrc = useWikiStore((s) => s.pendingScrollImageSrc)
   const setPendingScrollImageSrc = useWikiStore((s) => s.setPendingScrollImageSrc)
   const scrollRootRef = useRef<HTMLDivElement | null>(null)
 
   const { frontmatter, body } = useMemo(() => parseFrontmatter(content), [content])
+  const markdownBody = useMemo(
+    () => (onWikiLinkClick ? preprocessWikilinks(body) : body),
+    [body, onWikiLinkClick],
+  )
   const renderLanguage = useMemo(() => detectLanguage(body), [body])
   const direction = getTextDirection(renderLanguage)
   const htmlLang = getHtmlLang(renderLanguage)
@@ -193,12 +229,15 @@ function TextPreview({ filePath, content, label }: { filePath: string; content: 
     // (lazy loading + remote PNG decode) so this lands on a
     // 0-height box. After load, recompute.
     target.scrollIntoView({ behavior: "auto", block: "center" })
+    let loadListenerActive = false
+    const onLoad = () => {
+      target.scrollIntoView({ behavior: "smooth", block: "center" })
+      target.removeEventListener("load", onLoad)
+      loadListenerActive = false
+    }
     if (!target.complete) {
-      const onLoad = () => {
-        target.scrollIntoView({ behavior: "smooth", block: "center" })
-        target.removeEventListener("load", onLoad)
-      }
       target.addEventListener("load", onLoad)
+      loadListenerActive = true
     }
     // Briefly highlight the target so the user sees where they
     // landed — the page might be long and the image might be in
@@ -208,7 +247,12 @@ function TextPreview({ filePath, content, label }: { filePath: string; content: 
       target.classList.remove("ring-2", "ring-primary", "ring-offset-2")
     }, 1800)
     setPendingScrollImageSrc(null)
-    return () => clearTimeout(tHighlight)
+    return () => {
+      clearTimeout(tHighlight)
+      if (loadListenerActive) {
+        target.removeEventListener("load", onLoad)
+      }
+    }
   }, [pendingScrollImageSrc, content, setPendingScrollImageSrc])
 
   return (
@@ -228,6 +272,33 @@ function TextPreview({ filePath, content, label }: { filePath: string; content: 
           remarkPlugins={[remarkGfm, remarkMath]}
           rehypePlugins={[rehypeKatex]}
           components={{
+            a: ({ href, children }) => {
+              if (href?.startsWith("wikilink:") && onWikiLinkClick) {
+                const pageName = href.slice("wikilink:".length)
+                return (
+                  <button
+                    type="button"
+                    onClick={() => onWikiLinkClick(pageName)}
+                    className="inline text-primary underline decoration-primary/30 hover:opacity-80"
+                  >
+                    {children}
+                  </button>
+                )
+              }
+              if (href?.startsWith("http://") || href?.startsWith("https://")) {
+                return (
+                  <a
+                    href={href}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-primary underline hover:opacity-80"
+                  >
+                    {children}
+                  </a>
+                )
+              }
+              return <span className="text-primary underline">{children}</span>
+            },
             // Resolve `![](media/...)` references generated by the
             // ingest image-extraction step. Without this, the
             // browser tries to load `media/...` relative to the
@@ -275,7 +346,7 @@ function TextPreview({ filePath, content, label }: { filePath: string; content: 
             },
           }}
         >
-          {body}
+          {markdownBody}
         </ReactMarkdown>
       </div>
     </div>

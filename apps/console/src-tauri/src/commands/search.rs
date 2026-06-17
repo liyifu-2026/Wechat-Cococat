@@ -1026,6 +1026,7 @@ pub async fn search_federated_inner(
     query: String,
     top_k: usize,
     include_content: bool,
+    query_embedding: Option<Vec<f32>>,
 ) -> Result<Vec<FederatedSearchResultItem>, String> {
     let trimmed = query.trim();
     if trimmed.is_empty() || projects.is_empty() {
@@ -1041,7 +1042,7 @@ pub async fn search_federated_inner(
             trimmed.to_string(),
             limit,
             include_content,
-            None,
+            query_embedding.clone(),
         )
         .await?;
         return Ok(fuse_federated_rrf(
@@ -1065,7 +1066,7 @@ pub async fn search_federated_inner(
             trimmed.to_string(),
             per_library.max(1),
             include_content,
-            None,
+            query_embedding.clone(),
         )
         .await?;
         libraries.push((
@@ -1079,6 +1080,30 @@ pub async fn search_federated_inner(
         .into_iter()
         .take(limit)
         .collect())
+}
+
+#[tauri::command]
+pub async fn wiki_search_federated(
+    projects: Vec<FederatedProjectSpec>,
+    query: String,
+    top_k: Option<usize>,
+    include_content: Option<bool>,
+    query_embedding: Option<Vec<f32>>,
+    embedding_config: Option<SearchEmbeddingConfig>,
+) -> Result<Vec<FederatedSearchResultItem>, String> {
+    run_guarded_async("wiki_search_federated", async move {
+        let query_embedding =
+            resolve_query_embedding(&query, query_embedding, embedding_config).await?;
+        search_federated_inner(
+            projects,
+            query,
+            top_k.unwrap_or(DEFAULT_RESULTS),
+            include_content.unwrap_or(false),
+            query_embedding,
+        )
+        .await
+    })
+    .await
 }
 
 #[cfg(test)]

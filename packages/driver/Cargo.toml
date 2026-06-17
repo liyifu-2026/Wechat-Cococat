@@ -53,6 +53,9 @@ async-stream = "0.3"
 # WebSocket client (for VNC proxy)
 tokio-tungstenite = "0.26"
 
+# HTTP client (avatar CDN proxy)
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+
 # Async trait support
 async-trait = "0.1"
 

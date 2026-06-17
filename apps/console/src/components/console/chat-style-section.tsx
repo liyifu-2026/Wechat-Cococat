@@ -83,7 +83,7 @@ export function ChatStyleSection({ chatId }: ChatStyleSectionProps) {
   if (loading) {
     return (
       <p className="mt-1 text-xs text-muted-foreground">
-        {t("console.inbox.styleLoading")}
+        {t("wechat.inbox.styleLoading")}
       </p>
     )
   }
@@ -91,7 +91,7 @@ export function ChatStyleSection({ chatId }: ChatStyleSectionProps) {
   if (!dirName) {
     return (
       <p className="mt-1 text-xs text-muted-foreground">
-        {t("console.inbox.styleNoChat")}
+        {t("wechat.inbox.styleNoChat")}
       </p>
     )
   }
@@ -106,18 +106,18 @@ export function ChatStyleSection({ chatId }: ChatStyleSectionProps) {
       )}
 
       <div className="space-y-1">
-        <Label className="text-[11px]">{t("console.inbox.styleReplyMode")}</Label>
+        <Label className="text-[11px]">{t("wechat.inbox.styleReplyMode")}</Label>
         <select
-          className="w-full rounded-md border bg-background px-2 py-1 text-xs"
+          className="wx-themed-select w-full rounded-md border px-2 py-1 text-xs"
           value={form.replyMode}
           onChange={(e) =>
             patch({ replyMode: e.target.value as ChatStyleForm["replyMode"] })
           }
         >
-          <option value="">{t("console.inbox.styleReplyModeAuto")}</option>
-          <option value="fast">{t("console.inbox.styleReplyModeFast")}</option>
+          <option value="">{t("wechat.inbox.styleReplyModeAuto")}</option>
+          <option value="fast">{t("wechat.inbox.styleReplyModeFast")}</option>
           <option value="thoughtful">
-            {t("console.inbox.styleReplyModeThoughtful")}
+            {t("wechat.inbox.styleReplyModeThoughtful")}
           </option>
         </select>
       </div>
@@ -125,7 +125,7 @@ export function ChatStyleSection({ chatId }: ChatStyleSectionProps) {
       <div className="grid grid-cols-2 gap-2">
         <div className="space-y-1">
           <Label className="text-[11px]">
-            {t("console.inbox.styleCooldown")}
+            {t("wechat.inbox.styleCooldown")}
           </Label>
           <Input
             type="number"
@@ -140,7 +140,7 @@ export function ChatStyleSection({ chatId }: ChatStyleSectionProps) {
         </div>
         <div className="space-y-1">
           <Label className="text-[11px]">
-            {t("console.inbox.styleMaxSends")}
+            {t("wechat.inbox.styleMaxSends")}
           </Label>
           <Input
             type="number"
@@ -161,9 +161,9 @@ export function ChatStyleSection({ chatId }: ChatStyleSectionProps) {
       </div>
 
       <div className="space-y-1">
-        <Label className="text-[11px]">{t("console.inbox.styleAck")}</Label>
+        <Label className="text-[11px]">{t("wechat.inbox.styleAck")}</Label>
         <select
-          className="w-full rounded-md border bg-background px-2 py-1 text-xs"
+          className="wx-themed-select w-full rounded-md border px-2 py-1 text-xs"
           value={form.thoughtfulAck}
           onChange={(e) =>
             patch({
@@ -171,15 +171,15 @@ export function ChatStyleSection({ chatId }: ChatStyleSectionProps) {
             })
           }
         >
-          <option value="off">{t("console.inbox.styleAckOff")}</option>
-          <option value="default">{t("console.inbox.styleAckDefault")}</option>
-          <option value="custom">{t("console.inbox.styleAckCustom")}</option>
+          <option value="off">{t("wechat.inbox.styleAckOff")}</option>
+          <option value="default">{t("wechat.inbox.styleAckDefault")}</option>
+          <option value="custom">{t("wechat.inbox.styleAckCustom")}</option>
         </select>
         {form.thoughtfulAck === "custom" && (
           <Input
             className="mt-1 h-7 text-xs"
             value={form.thoughtfulAckCustom}
-            placeholder={t("console.inbox.styleAckPlaceholder")}
+            placeholder={t("wechat.inbox.styleAckPlaceholder")}
             onChange={(e) => patch({ thoughtfulAckCustom: e.target.value })}
           />
         )}
@@ -191,7 +191,7 @@ export function ChatStyleSection({ chatId }: ChatStyleSectionProps) {
           checked={form.thoughtfulReflect}
           onChange={(e) => patch({ thoughtfulReflect: e.target.checked })}
         />
-        {t("console.inbox.styleReflect")}
+        {t("wechat.inbox.styleReflect")}
       </label>
 
       <Button

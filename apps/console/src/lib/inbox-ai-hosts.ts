@@ -1,0 +1,5 @@
+export const INBOX_AI_ASSIST_HOST_ID = "inbox-ai-assist-host"
+export const INBOX_AI_EXPAND_HOST_ID = "inbox-ai-expand-host"
+export const INBOX_AI_BUBBLE_PORTAL_ID = "inbox-ai-bubble-portal"
+export const INBOX_AI_PANEL_ID = "inbox-ai-panel"
+export const INBOX_AI_TRIGGER_WRAP_ID = "inbox-ai-trigger-wrap"

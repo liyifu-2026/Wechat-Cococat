@@ -4,6 +4,11 @@ import { defineConfig } from "vite"
 import react from "@vitejs/plugin-react"
 import tailwindcss from "@tailwindcss/vite"
 
+const wechatEmojiSpritePath = path.resolve(
+  __dirname,
+  "node_modules/wechat-emoji-renderer/src/assets/sprite.png",
+)
+
 const host = process.env.TAURI_DEV_HOST
 
 // Read version from package.json at config-load time so the Settings
@@ -15,7 +20,18 @@ export default defineConfig(async () => ({
   plugins: [react(), tailwindcss()],
 
   resolve: {
-    alias: { "@": path.resolve(__dirname, "./src") },
+    alias: {
+      "@": path.resolve(__dirname, "./src"),
+      "@cococat/shared/llm-stack": path.resolve(
+        __dirname,
+        "../../packages/shared/src/llm-stack.ts",
+      ),
+      "@cococat/shared/model-capabilities": path.resolve(
+        __dirname,
+        "../../packages/shared/src/model-capabilities.ts",
+      ),
+      "wechat-emoji-renderer/src/assets/sprite.png": wechatEmojiSpritePath,
+    },
   },
 
   define: {

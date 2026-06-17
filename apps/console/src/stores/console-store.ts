@@ -4,19 +4,30 @@ import {
   migrateLegacyModule,
   migrateStoredActiveModule,
   migrateSystemLayoutV2,
+  migrateSystemPanelSplit,
+  migrateWechatShellLayout,
   saveStoredTab,
+  saveWechatShellTab,
   loadStoredTab,
+  loadWechatShellTab,
   type AgentTab,
   type BrainTab,
   type ConsoleModule,
   type InboxListFilter,
+  type KnowledgeShellTab,
   type MemoryTab,
   type SettingsGroup,
   type StackTab,
   type SystemAdvancedTab,
   type SystemPanel,
   type WeChatTab,
+  type WechatSettingsGroup,
+  type WechatSettingsTab,
+  type WechatShellTab,
+  normalizeWechatSettingsTab,
+  settingsTabForBrainTab,
 } from "@/lib/console-layout"
+import { openWechatVncInBrowser } from "@/lib/wechat-vnc"
 import type { StackService } from "@/lib/stack-client"
 import { wikiSaveRegistry } from "@/lib/wiki-file-save-registry"
 import { useWikiStore } from "@/stores/wiki-store"
@@ -70,6 +81,80 @@ function runModuleMigration(): void {
 
 runModuleMigration()
 migrateSystemLayoutV2()
+migrateSystemPanelSplit()
+migrateWechatShellLayout()
+
+export type OpenSettingsModalOptions = {
+  group?: WechatSettingsGroup
+  tab?: WechatSettingsTab
+  troubleshoot?: boolean
+}
+
+const SHELL_SETTINGS_TABS = new Set<WechatSettingsTab>([
+  "llm-config",
+  "embedding",
+  "web-search",
+  "brain-persona",
+  "brain-routing",
+  "customer-types",
+  "about",
+  "brain",
+  "cococat",
+  "stack-service",
+  "stack-logs",
+  "wechat-connect",
+])
+
+function normalizeSettingsTab(
+  tab?: WechatSettingsTab,
+  group?: WechatSettingsGroup,
+): WechatSettingsTab {
+  if (tab && SHELL_SETTINGS_TABS.has(tab)) {
+    return normalizeWechatSettingsTab(tab)
+  }
+  if (group === "ai-settings") return "llm-config"
+  if (group === "wechat-ops") return "customer-types"
+  return "about"
+}
+
+function mapSystemPanelToSettings(
+  panel?: SystemPanel,
+  _stackTab?: StackTab | null,
+): OpenSettingsModalOptions {
+  if (panel === "models") {
+    return { group: "ai-settings", tab: "llm-config" }
+  }
+  if (panel === "wiki" || panel === "knowledge") {
+    return { group: "ai-settings", tab: "embedding" }
+  }
+  if (panel === "program") {
+    return { group: "system-advanced", tab: "about" }
+  }
+  return { group: "system-advanced", tab: "about" }
+}
+
+function mapSettingsGroupToModal(
+  group: SettingsGroup,
+  category?: string | null,
+): OpenSettingsModalOptions {
+  if (category === "llm-config") {
+    return { group: "ai-settings", tab: "llm-config" }
+  }
+  if (group === "wiki") {
+    const tab = (category as WechatSettingsTab | undefined) ?? "embedding"
+    if (tab === "web-search") {
+      return { group: "ai-settings", tab: "web-search" }
+    }
+    return { group: "ai-settings", tab: "embedding" }
+  }
+  if (group === "cococat") {
+    return { group: "system-advanced", tab: "about" }
+  }
+  if (category === "about") {
+    return { group: "system-advanced", tab: "about" }
+  }
+  return { group: "system-advanced", tab: "about" }
+}
 
 function loadActiveModule(): ConsoleModule {
   try {
@@ -96,13 +181,20 @@ async function navigateWithWikiFlush(action: () => void): Promise<void> {
 
 interface ConsoleState {
   activeModule: ConsoleModule
+  activeWechatTab: WechatShellTab
+  settingsModalOpen: boolean
+  settingsModalGroup: WechatSettingsGroup
+  settingsModalTab: WechatSettingsTab
+  settingsModalTroubleshoot: boolean
   brainTab: BrainTab
   prefillSessionKey: string | null
   pendingWeChatTab: WeChatTab | null
   pendingWeChatChatId: string | null
+  pendingContactUsername: string | null
   pendingAgentChatId: string | null
   pendingAgentTab: AgentTab | null
   pendingBrainTab: BrainTab | null
+  pendingKnowledgeTab: KnowledgeShellTab | null
   pendingMemoryTab: MemoryTab | null
   pendingStackTab: StackTab | null
   pendingSystemPanel: SystemPanel | null
@@ -116,10 +208,14 @@ interface ConsoleState {
   pendingKbEditMode: boolean
   highlightStackService: StackService | null
   setActiveModule: (module: ConsoleModule) => void
+  setActiveWechatTab: (tab: WechatShellTab) => void
+  openSettingsModal: (opts?: OpenSettingsModalOptions) => void
+  closeSettingsModal: () => void
   setBrainTab: (tab: BrainTab) => void
   navigateOverview: () => void
   navigateInbox: (tab?: WeChatTab, filter?: InboxListFilter) => void
   navigateInboxChat: (chatId: string) => void
+  navigateContactProfile: (username: string) => void
   navigateBrain: (tab?: BrainTab, deepLink?: BrainKbDeepLinkOptions) => void
   navigateBrainChat: (chatId: string, tab?: AgentTab) => void
   navigateSystem: (panel?: SystemPanel, focusService?: StackService) => void
@@ -127,6 +223,8 @@ interface ConsoleState {
   navigateSystemWechat: (troubleshoot?: boolean) => void
   navigateSystemAdvanced: (tab?: SystemAdvancedTab) => void
   navigateSystemKnowledge: () => void
+  /** 系统 · 模型 — 统一 LLM 配置 */
+  navigateSystemModels: () => void
   navigateSettings: (group: SettingsGroup, category?: string) => void
   /** @deprecated use navigateInbox */
   navigateWeChat: (tab: WeChatTab) => void
@@ -142,9 +240,11 @@ interface ConsoleState {
   openAgentWithSession: (chatId: string) => void
   consumePrefillSessionKey: () => string | null
   consumePendingWeChatChatId: () => string | null
+  consumePendingContactUsername: () => string | null
   consumePendingAgentChatId: () => string | null
   consumePendingAgentTab: () => AgentTab | null
   consumePendingBrainTab: () => BrainTab | null
+  consumePendingKnowledgeTab: () => KnowledgeShellTab | null
   consumePendingSystemPanel: () => SystemPanel | null
   consumePendingMemoryTab: () => MemoryTab | null
   consumePendingSettingsNavigation: () => {
@@ -158,17 +258,24 @@ interface ConsoleState {
   hasPendingKbDeepLink: () => boolean
 }
 
-export type { ConsoleModule }
+export type { ConsoleModule, WechatShellTab }
 
 export const useConsoleStore = create<ConsoleState>((set, get) => ({
   activeModule: loadActiveModule(),
+  activeWechatTab: loadWechatShellTab(),
+  settingsModalOpen: false,
+  settingsModalGroup: "system-advanced",
+  settingsModalTab: "llm-config",
+  settingsModalTroubleshoot: false,
   brainTab: loadStoredTab(LAYOUT_KEYS.brainTab, ["kb", "persona", "routing"], "persona"),
   prefillSessionKey: null,
   pendingWeChatTab: null,
   pendingWeChatChatId: null,
+  pendingContactUsername: null,
   pendingAgentChatId: null,
   pendingAgentTab: null,
   pendingBrainTab: null,
+  pendingKnowledgeTab: null,
   pendingMemoryTab: null,
   pendingStackTab: null,
   pendingSystemPanel: null,
@@ -185,8 +292,41 @@ export const useConsoleStore = create<ConsoleState>((set, get) => ({
   setActiveModule: (activeModule) => {
     void navigateWithWikiFlush(() => {
       persistModule(activeModule)
-      set({ activeModule })
+      const tab =
+        activeModule === "inbox" || activeModule === "overview"
+          ? "chats"
+          : get().activeWechatTab === "contacts"
+            ? "contacts"
+            : "chats"
+      saveWechatShellTab(tab)
+      set({ activeModule, activeWechatTab: tab })
     })
+  },
+
+  setActiveWechatTab: (activeWechatTab) => {
+    void navigateWithWikiFlush(() => {
+      persistModule("inbox")
+      saveWechatShellTab(activeWechatTab)
+      set({ activeWechatTab, activeModule: "inbox" })
+    })
+  },
+
+  openSettingsModal: (opts) => {
+    void navigateWithWikiFlush(() => {
+      const group = opts?.group ?? "system-advanced"
+      const tab = normalizeSettingsTab(opts?.tab, group)
+      set({
+        settingsModalOpen: true,
+        settingsModalGroup: group,
+        settingsModalTab: tab,
+        settingsModalTroubleshoot: opts?.troubleshoot ?? false,
+        pendingWechatTroubleshoot: opts?.troubleshoot ? true : null,
+      })
+    })
+  },
+
+  closeSettingsModal: () => {
+    set({ settingsModalOpen: false, settingsModalTroubleshoot: false })
   },
 
   setBrainTab: (brainTab) => {
@@ -195,17 +335,16 @@ export const useConsoleStore = create<ConsoleState>((set, get) => ({
   },
 
   navigateOverview: () => {
-    void navigateWithWikiFlush(() => {
-      persistModule("overview")
-      set({ activeModule: "overview" })
-    })
+    get().setActiveWechatTab("chats")
   },
 
   navigateInbox: (tab, filter) => {
     void navigateWithWikiFlush(() => {
       persistModule("inbox")
+      saveWechatShellTab("chats")
       set({
         activeModule: "inbox",
+        activeWechatTab: "chats",
         pendingWeChatTab: tab ?? null,
         pendingInboxFilter: filter ?? null,
       })
@@ -215,27 +354,56 @@ export const useConsoleStore = create<ConsoleState>((set, get) => ({
   navigateInboxChat: (chatId) => {
     void navigateWithWikiFlush(() => {
       persistModule("inbox")
+      saveWechatShellTab("chats")
       set({
         activeModule: "inbox",
+        activeWechatTab: "chats",
         pendingWeChatTab: "chats",
         pendingWeChatChatId: chatId,
       })
     })
   },
 
+  navigateContactProfile: (username) => {
+    void navigateWithWikiFlush(() => {
+      persistModule("inbox")
+      saveWechatShellTab("contacts")
+      set({
+        activeModule: "inbox",
+        activeWechatTab: "contacts",
+        pendingContactUsername: username.trim() || null,
+      })
+    })
+  },
+
   navigateBrain: (tab, deepLink) => {
     void navigateWithWikiFlush(() => {
-      persistModule("brain")
-      const nextTab = tab ?? get().brainTab
-      if (tab) saveStoredTab(LAYOUT_KEYS.brainTab, tab)
+      const nextTab = tab ?? get().brainTab ?? "kb"
+      saveStoredTab(LAYOUT_KEYS.brainTab, nextTab)
+
+      if (nextTab === "persona" || nextTab === "routing") {
+        set({
+          activeModule: "inbox",
+          brainTab: nextTab,
+          pendingBrainTab: nextTab,
+          settingsModalOpen: true,
+          settingsModalGroup: "wechat-ops",
+          settingsModalTab: settingsTabForBrainTab(nextTab),
+        })
+        return
+      }
+
       const hasDeepLink =
         !!deepLink?.wikiPath?.trim() ||
         !!deepLink?.topic?.trim() ||
         deepLink?.openInEditMode === true
       set({
-        activeModule: "brain",
-        brainTab: nextTab,
-        pendingBrainTab: tab ?? null,
+        activeModule: "inbox",
+        activeWechatTab: "kb",
+        brainTab: "kb",
+        pendingKnowledgeTab: "kb",
+        pendingBrainTab: "kb",
+        settingsModalOpen: false,
         ...(hasDeepLink
           ? {
               pendingWikiPath: deepLink?.wikiPath?.trim() ?? null,
@@ -253,96 +421,67 @@ export const useConsoleStore = create<ConsoleState>((set, get) => ({
 
   navigateBrainChat: (chatId, tab = "chats") => {
     void navigateWithWikiFlush(() => {
-      persistModule("brain")
       set({
-        activeModule: "brain",
+        activeModule: "inbox",
         brainTab: "persona",
+        pendingBrainTab: "persona",
         pendingAgentChatId: chatId,
         pendingAgentTab: tab,
+        settingsModalOpen: true,
+        settingsModalGroup: "wechat-ops",
+        settingsModalTab: settingsTabForBrainTab("persona"),
       })
     })
   },
 
   navigateSystem: (panel, focusService) => {
+    const mapped = mapSystemPanelToSettings(panel)
     void navigateWithWikiFlush(() => {
       persistModule("system")
-      const stackTab: StackTab =
-        panel === "logs" ? "logs" : "service"
       if (panel) saveStoredTab(LAYOUT_KEYS.systemPanel, panel)
       set({
         activeModule: "system",
         pendingSystemPanel: panel ?? null,
-        pendingStackTab: stackTab,
+        pendingStackTab: panel === "logs" ? "logs" : "service",
         highlightStackService: focusService ?? null,
+        settingsModalOpen: true,
+        settingsModalGroup: mapped.group ?? "system-advanced",
+        settingsModalTab: mapped.tab ?? "about",
       })
     })
   },
 
   navigateSystemWechat: (troubleshoot = false) => {
-    void navigateWithWikiFlush(() => {
-      persistModule("system")
-      saveStoredTab(LAYOUT_KEYS.systemPanel, "services")
-      set({
-        activeModule: "system",
-        pendingSystemPanel: "services",
-        pendingStackTab: "service",
-        highlightStackService: "driver",
-        pendingWechatTroubleshoot: troubleshoot ? true : null,
-      })
-    })
+    void openWechatVncInBrowser()
+    if (troubleshoot) {
+      console.info("[wechat] opened noVNC in browser for troubleshoot")
+    }
   },
 
   navigateSystemAdvanced: (tab = "interface") => {
-    void navigateWithWikiFlush(() => {
-      persistModule("system")
-      saveStoredTab(LAYOUT_KEYS.systemPanel, "advanced")
-      saveStoredTab(LAYOUT_KEYS.systemAdvancedTab, tab)
-      set({
-        activeModule: "system",
-        pendingSystemPanel: "advanced",
-        pendingSystemAdvancedTab: tab,
-      })
-    })
+    if (tab === "memory") {
+      get().navigateBrain("persona")
+      return
+    }
+    if (tab === "bridge" || tab === "agent") {
+      get().navigateBrain("routing")
+      return
+    }
+    get().openSettingsModal({ group: "system-advanced", tab: "about" })
   },
 
   navigateSystemKnowledge: () => {
     useWikiStore.getState().setActiveView("wiki")
-    get().navigateSystem("knowledge")
+    get().navigateBrain("kb")
+  },
+
+  navigateSystemModels: () => {
+    get().openSettingsModal({ group: "ai-settings", tab: "llm-config" })
   },
 
   navigateSettings: (group, category) => {
-    void navigateWithWikiFlush(() => {
-      persistModule("system")
-      if (group === "system") {
-        saveStoredTab(LAYOUT_KEYS.systemPanel, "advanced")
-        saveStoredTab(LAYOUT_KEYS.systemAdvancedTab, "interface")
-        set({
-          activeModule: "system",
-          pendingSystemPanel: "advanced",
-          pendingSystemAdvancedTab: "interface",
-          pendingSettingsGroup: null,
-          pendingSettingsCategory: category ?? null,
-        })
-        return
-      }
-      if (group === "wiki") {
-        saveStoredTab(LAYOUT_KEYS.systemPanel, "wikiModels")
-        set({
-          activeModule: "system",
-          pendingSystemPanel: "wikiModels",
-          pendingSettingsGroup: "wiki",
-          pendingSettingsCategory: category ?? null,
-        })
-        return
-      }
-      saveStoredTab(LAYOUT_KEYS.systemPanel, "program")
-      set({
-        activeModule: "system",
-        pendingSystemPanel: "program",
-        pendingSettingsGroup: group,
-        pendingSettingsCategory: category ?? null,
-      })
-    })
+    const mapped = mapSettingsGroupToModal(group, category)
+    get().openSettingsModal(mapped)
   },
 
   navigateWeChat: (tab) => {
@@ -370,18 +509,10 @@ export const useConsoleStore = create<ConsoleState>((set, get) => ({
     set({ pendingWeChatTab: null })
   },
 
-  openMemoryWithSession: (chatId, tab = "overview") => {
+  openMemoryWithSession: (chatId) => {
+    get().navigateBrain("persona")
     void navigateWithWikiFlush(() => {
-      persistModule("system")
-      saveStoredTab(LAYOUT_KEYS.systemPanel, "advanced")
-      saveStoredTab(LAYOUT_KEYS.systemAdvancedTab, "memory")
-      set({
-        activeModule: "system",
-        pendingSystemPanel: "advanced",
-        pendingSystemAdvancedTab: "memory",
-        prefillSessionKey: chatId,
-        pendingMemoryTab: tab,
-      })
+      set({ prefillSessionKey: chatId })
     })
   },
 
@@ -401,6 +532,12 @@ export const useConsoleStore = create<ConsoleState>((set, get) => ({
     return id
   },
 
+  consumePendingContactUsername: () => {
+    const username = get().pendingContactUsername
+    if (username) set({ pendingContactUsername: null })
+    return username
+  },
+
   consumePendingAgentChatId: () => {
     const id = get().pendingAgentChatId
     if (id) set({ pendingAgentChatId: null })
@@ -416,6 +553,12 @@ export const useConsoleStore = create<ConsoleState>((set, get) => ({
   consumePendingBrainTab: () => {
     const tab = get().pendingBrainTab
     if (tab) set({ pendingBrainTab: null })
+    return tab
+  },
+
+  consumePendingKnowledgeTab: () => {
+    const tab = get().pendingKnowledgeTab
+    if (tab) set({ pendingKnowledgeTab: null })
     return tab
   },
 

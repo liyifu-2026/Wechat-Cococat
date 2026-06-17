@@ -12,12 +12,17 @@ import {
 import { openUrl } from "@tauri-apps/plugin-opener"
 import { useWikiStore } from "@/stores/wiki-store"
 import { readFile, writeFile, listDirectory } from "@/commands/fs"
-import { lastQueryPages } from "@/components/chat/chat-panel"
+import { lastQueryPages } from "@/lib/wiki-assist"
 import type { DisplayMessage, MessageReference } from "@/stores/chat-store"
 import type { FileNode } from "@/types/wiki"
 
 import { convertLatexToUnicode } from "@/lib/latex-to-unicode"
-import { normalizePath, getFileName } from "@/lib/path-utils"
+import { normalizePath, joinPath } from "@/lib/path-utils"
+import {
+  wikiCitationReadCandidates,
+  wikiReferenceToOpenMeta,
+  type WikiReferenceOpenMeta,
+} from "@/lib/wiki-reference-path"
 import { makeQueryFileName } from "@/lib/wiki-filename"
 import { hasUsableLlm } from "@/lib/has-usable-llm"
 import { resolveMarkdownImageSrc } from "@/lib/markdown-image-resolver"
@@ -26,6 +31,7 @@ import { detectLanguage } from "@/lib/detect-language"
 import { getHtmlLang, getTextDirection } from "@/lib/language-metadata"
 import { MermaidDiagram, unwrapMermaidPre } from "@/components/mermaid-diagram"
 import { inferWikiTypeFromPath } from "@/lib/wiki-page-types"
+import { resolveWikiPagePath } from "@/lib/wiki-link-resolve"
 
 // Module-level cache of source file names
 let cachedSourceFiles: string[] = []
@@ -64,58 +70,106 @@ interface ChatMessageProps {
   message: DisplayMessage
   isLastAssistant?: boolean
   onRegenerate?: () => void
+  /** When set, wiki citations open inline (AI assist expand) instead of Brain. */
+  onOpenReference?: (
+    path: string,
+    title?: string,
+    meta?: WikiReferenceOpenMeta,
+  ) => void
+  /** Federated wiki roots for resolving [[wikilinks]] in inbox AI assist. */
+  wikiProjectPaths?: string[]
+  /** Inbox AI assist: no avatar, wx bubble colors, icon-only actions. */
+  variant?: "default" | "inbox-ai"
 }
 
-function ChatMessageImpl({ message, isLastAssistant, onRegenerate }: ChatMessageProps) {
+function ChatMessageImpl({
+  message,
+  isLastAssistant,
+  onRegenerate,
+  onOpenReference,
+  wikiProjectPaths,
+  variant = "default",
+}: ChatMessageProps) {
   const isUser = message.role === "user"
   const isSystem = message.role === "system"
   const isAssistant = message.role === "assistant"
+  const isInboxAi = variant === "inbox-ai"
   const [hovered, setHovered] = useState(false)
+
+  const bubbleClass = isInboxAi
+    ? isUser
+      ? "bg-[var(--wx-bubble-self)] text-[var(--wx-bubble-self-text)]"
+      : "border border-[var(--wx-bubble-other-border)] bg-[var(--wx-bubble-other)] text-[var(--wx-bubble-other-text)]"
+    : isUser
+      ? "bg-primary text-primary-foreground"
+      : "bg-muted text-foreground"
 
   return (
     <div
-      className={`flex gap-2 ${isUser ? "flex-row-reverse" : "flex-row"}`}
+      className={`flex gap-2 ${
+        isInboxAi
+          ? `w-full ${isUser ? "justify-end" : "justify-start"}`
+          : isUser
+            ? "flex-row-reverse"
+            : "flex-row"
+      }`}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
     >
-      <div
-        className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full ${
-          isSystem
-            ? "bg-accent text-accent-foreground"
-            : isUser
-              ? "bg-primary text-primary-foreground"
-              : "bg-muted text-muted-foreground"
-        }`}
-      >
-        {isUser ? <User className="h-4 w-4" /> : <Bot className="h-4 w-4" />}
-      </div>
-      <div className="max-w-[80%] flex flex-col gap-1.5">
+      {!isInboxAi && (
         <div
-          className={`rounded-lg px-3 py-2 text-sm ${
-            isUser
-              ? "bg-primary text-primary-foreground"
-              : "bg-muted text-foreground"
+          className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full ${
+            isSystem
+              ? "bg-accent text-accent-foreground"
+              : isUser
+                ? "bg-primary text-primary-foreground"
+                : "bg-muted text-muted-foreground"
           }`}
         >
+          {isUser ? <User className="h-4 w-4" /> : <Bot className="h-4 w-4" />}
+        </div>
+      )}
+      <div
+        className={`flex flex-col gap-1.5 ${
+          isInboxAi ? "max-w-[85%]" : "max-w-[80%]"
+        }`}
+      >
+        <div className={`rounded-lg px-3 py-2 text-sm ${bubbleClass}`}>
           {isUser ? (
             <p dir="auto" className="whitespace-pre-wrap break-words">{message.content}</p>
           ) : (
-            <MarkdownContent content={message.content} />
+            <MarkdownContent
+              content={message.content}
+              onOpenReference={onOpenReference}
+              wikiProjectPaths={wikiProjectPaths}
+            />
           )}
         </div>
-        {isAssistant && <CitedReferencesPanel content={message.content} savedReferences={message.references} />}
+        {isAssistant && (
+          <CitedReferencesPanel
+            content={message.content}
+            savedReferences={message.references}
+            onOpenReference={onOpenReference}
+          />
+        )}
         {isAssistant && hovered && (
           <div className="flex items-center gap-1">
-            <CopyButton content={message.content} />
-            <SaveToWikiButton content={message.content} visible={true} />
+            <CopyButton content={message.content} compact={isInboxAi} />
+            <SaveToWikiButton content={message.content} visible={true} compact={isInboxAi} />
             {isLastAssistant && onRegenerate && (
               <button
                 type="button"
                 onClick={onRegenerate}
-                className="inline-flex items-center gap-1 rounded px-2 py-0.5 text-[11px] text-muted-foreground hover:text-primary hover:bg-primary/10 transition-colors"
+                className={
+                  isInboxAi
+                    ? "inline-flex h-7 w-7 items-center justify-center rounded text-[var(--wx-muted)] hover:bg-[var(--wx-list-hover)] hover:text-[var(--wx-text)]"
+                    : "inline-flex items-center gap-1 rounded px-2 py-0.5 text-[11px] text-muted-foreground hover:text-primary hover:bg-primary/10 transition-colors"
+                }
                 title="Regenerate this response"
+                aria-label="Regenerate this response"
               >
-                <RefreshCw className="h-3 w-3" /> Regenerate
+                <RefreshCw className="h-3.5 w-3.5" />
+                {!isInboxAi && <> Regenerate</>}
               </button>
             )}
           </div>
@@ -129,9 +183,11 @@ export const ChatMessage = memo(ChatMessageImpl, (prev, next) =>
   prev.message === next.message
   && prev.isLastAssistant === next.isLastAssistant
   && prev.onRegenerate === next.onRegenerate
+  && prev.onOpenReference === next.onOpenReference
+  && prev.variant === next.variant
 )
 
-function CopyButton({ content }: { content: string }) {
+function CopyButton({ content, compact = false }: { content: string; compact?: boolean }) {
   const [copied, setCopied] = useState(false)
 
   const handleCopy = useCallback(async () => {
@@ -151,16 +207,29 @@ function CopyButton({ content }: { content: string }) {
     <button
       type="button"
       onClick={handleCopy}
-      className="inline-flex items-center gap-1 rounded px-2 py-0.5 text-[11px] text-muted-foreground hover:text-primary hover:bg-primary/10 transition-colors"
+      className={
+        compact
+          ? "inline-flex h-7 w-7 items-center justify-center rounded text-[var(--wx-muted)] hover:bg-[var(--wx-list-hover)] hover:text-[var(--wx-text)]"
+          : "inline-flex items-center gap-1 rounded px-2 py-0.5 text-[11px] text-muted-foreground hover:text-primary hover:bg-primary/10 transition-colors"
+      }
       title="Copy to clipboard"
+      aria-label={copied ? "Copied" : "Copy"}
     >
-      {copied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
-      {copied ? "Copied!" : "Copy"}
+      {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+      {!compact && (copied ? "Copied!" : "Copy")}
     </button>
   )
 }
 
-function SaveToWikiButton({ content, visible }: { content: string; visible: boolean }) {
+function SaveToWikiButton({
+  content,
+  visible,
+  compact = false,
+}: {
+  content: string
+  visible: boolean
+  compact?: boolean
+}) {
   const project = useWikiStore((s) => s.project)
   const setFileTree = useWikiStore((s) => s.setFileTree)
   const [saved, setSaved] = useState(false)
@@ -263,11 +332,16 @@ function SaveToWikiButton({ content, visible }: { content: string; visible: bool
       type="button"
       onClick={handleSave}
       disabled={saving}
-      className="self-start inline-flex items-center gap-1 rounded px-2 py-0.5 text-[11px] text-muted-foreground hover:text-primary hover:bg-primary/10 transition-colors"
+      className={
+        compact
+          ? "inline-flex h-7 w-7 items-center justify-center rounded text-[var(--wx-muted)] hover:bg-[var(--wx-list-hover)] hover:text-[var(--wx-text)] disabled:opacity-40"
+          : "self-start inline-flex items-center gap-1 rounded px-2 py-0.5 text-[11px] text-muted-foreground hover:text-primary hover:bg-primary/10 transition-colors"
+      }
       title="Save to wiki"
+      aria-label={saved ? "Saved" : saving ? "Saving" : "Save to wiki"}
     >
-      <BookmarkPlus className="h-3 w-3" />
-      {saved ? "Saved!" : saving ? "Saving..." : "Save to Wiki"}
+      <BookmarkPlus className="h-3.5 w-3.5" />
+      {!compact && (saved ? "Saved!" : saving ? "Saving..." : "Save to Wiki")}
     </button>
   )
 }
@@ -335,7 +409,19 @@ interface CitedImageInfo {
   firstUrl: string | null
 }
 
-function CitedReferencesPanel({ content, savedReferences }: { content: string; savedReferences?: CitedPage[] }) {
+function CitedReferencesPanel({
+  content,
+  savedReferences,
+  onOpenReference,
+}: {
+  content: string
+  savedReferences?: CitedPage[]
+  onOpenReference?: (
+    path: string,
+    title?: string,
+    meta?: WikiReferenceOpenMeta,
+  ) => void
+}) {
   const project = useWikiStore((s) => s.project)
   const setSelectedFile = useWikiStore((s) => s.setSelectedFile)
   const setFileContent = useWikiStore((s) => s.setFileContent)
@@ -363,34 +449,18 @@ function CitedReferencesPanel({ content, savedReferences }: { content: string; s
   // silently treated as { count: 0, firstUrl: null } (page may
   // not exist on disk yet, e.g. a citation the LLM hallucinated).
   useEffect(() => {
-    if (!project || citedPages.length === 0) return
-    const pp = normalizePath(project.path)
+    if (citedPages.length === 0) return
+    const pp = project ? normalizePath(project.path) : undefined
     let cancelled = false
     Promise.all(
       citedPages.map(async (page) => {
-        // Try the path verbatim first, then the same fallback set
-        // the click-handler uses below — keeps "is the file on
-        // disk" check consistent across the panel.
         if (page.kind === "external") {
           return [page.path, { count: 0, firstUrl: null }] as const
         }
-        const id = getFileName(page.path.replace(/^wiki\//, "").replace(/\.md$/, ""))
-        const candidates = [
-          `${pp}/${page.path}`,
-          `${pp}/wiki/entities/${id}.md`,
-          `${pp}/wiki/concepts/${id}.md`,
-          `${pp}/wiki/sources/${id}.md`,
-          `${pp}/wiki/queries/${id}.md`,
-          `${pp}/wiki/synthesis/${id}.md`,
-          `${pp}/wiki/comparisons/${id}.md`,
-          `${pp}/wiki/${id}.md`,
-        ]
+        const candidates = wikiCitationReadCandidates(page, pp)
         for (const candidate of candidates) {
           try {
             const text = await readFile(candidate)
-            // Reset stateful regex.lastIndex by `new RegExp(...)` —
-            // module-level `g` regexes carry state across calls
-            // and would skip matches on the second invocation.
             const re = new RegExp(CITED_IMAGE_RE.source, CITED_IMAGE_RE.flags)
             const matches = [...text.matchAll(re)]
             const info: CitedImageInfo = {
@@ -424,9 +494,10 @@ function CitedReferencesPanel({ content, savedReferences }: { content: string; s
    * opening the wiki page when no raw source is found.
    */
   const handleJumpToImageSource = useCallback(
-    async (firstUrl: string, fallbackPath: string) => {
-      if (!project) return
-      const pp = normalizePath(project.path)
+    async (firstUrl: string, page: CitedPage) => {
+      const pp = normalizePath(page.projectPath ?? project?.path ?? "")
+      if (!pp) return
+      const fallbackPath = page.relPath ?? page.path
       const rawPath = await findRawSourceForImage(firstUrl, pp)
       if (rawPath) {
         try {
@@ -440,13 +511,11 @@ function CitedReferencesPanel({ content, savedReferences }: { content: string; s
           console.warn(`[refs:image-jump] failed to read ${rawPath}:`, err)
         }
       }
-      // Fallback: open the wiki summary itself with same scroll
-      // target — at least the safety-net section will scroll into
-      // view there.
       try {
-        const content = await readFile(`${pp}/${fallbackPath}`)
+        const wikiPath = wikiCitationReadCandidates(page, pp)[0] ?? joinPath(pp, fallbackPath)
+        const content = await readFile(wikiPath)
         setPendingScrollImageSrc(firstUrl)
-        setSelectedFile(`${pp}/${fallbackPath}`)
+        setSelectedFile(wikiPath)
         setFileContent(content)
       } catch (err) {
         console.warn(`[refs:image-jump] fallback also failed:`, err)
@@ -517,19 +586,19 @@ function CitedReferencesPanel({ content, savedReferences }: { content: string; s
               }
               return
             }
+            if (onOpenReference) {
+              onOpenReference(
+                page.path,
+                page.title,
+                wikiReferenceToOpenMeta(page),
+              )
+              return
+            }
             if (!project) return
-            const pp = normalizePath(project.path)
-            const id = getFileName(page.path.replace(/^wiki\//, "").replace(/\.md$/, ""))
-            const candidates = [
-              `${pp}/${page.path}`,
-              `${pp}/wiki/entities/${id}.md`,
-              `${pp}/wiki/concepts/${id}.md`,
-              `${pp}/wiki/sources/${id}.md`,
-              `${pp}/wiki/queries/${id}.md`,
-              `${pp}/wiki/synthesis/${id}.md`,
-              `${pp}/wiki/comparisons/${id}.md`,
-              `${pp}/wiki/${id}.md`,
-            ]
+            const candidates = wikiCitationReadCandidates(
+              page,
+              normalizePath(project.path),
+            )
             for (const candidate of candidates) {
               try {
                 await readFile(candidate)
@@ -539,7 +608,7 @@ function CitedReferencesPanel({ content, savedReferences }: { content: string; s
                 // try next
               }
             }
-            setSelectedFile(`${pp}/${page.path}`)
+            setSelectedFile(candidates[0] ?? page.path)
           }
           return (
             // Outer is a div, NOT a button — we have two click
@@ -569,7 +638,7 @@ function CitedReferencesPanel({ content, savedReferences }: { content: string; s
               {hasImages && info?.firstUrl && (
                 <button
                   type="button"
-                  onClick={() => handleJumpToImageSource(info.firstUrl!, page.path)}
+                  onClick={() => handleJumpToImageSource(info.firstUrl!, page)}
                   className="flex shrink-0 items-center gap-0.5 rounded px-1 py-0.5 text-[10px] text-blue-600 hover:bg-blue-100/40 dark:text-blue-400 dark:hover:bg-blue-900/30 transition-colors"
                   title={`Open original document at first image (${info.count} image${info.count === 1 ? "" : "s"} on this page)`}
                 >
@@ -689,24 +758,50 @@ function extractCitedPages(text: string): CitedPage[] {
 
 interface StreamingMessageProps {
   content: string
+  onOpenReference?: (
+    path: string,
+    title?: string,
+    meta?: WikiReferenceOpenMeta,
+  ) => void
+  wikiProjectPaths?: string[]
+  variant?: "default" | "inbox-ai"
 }
 
-export function StreamingMessage({ content }: StreamingMessageProps) {
+export function StreamingMessage({
+  content,
+  onOpenReference,
+  wikiProjectPaths,
+  variant = "default",
+}: StreamingMessageProps) {
   const { thinking, answer } = useMemo(() => separateThinking(content), [content])
   const isThinking = thinking !== null && answer.length === 0
+  const isInboxAi = variant === "inbox-ai"
+  const bubbleClass = isInboxAi
+    ? "border border-[var(--wx-bubble-other-border)] bg-[var(--wx-bubble-other)] text-[var(--wx-bubble-other-text)]"
+    : "bg-muted text-foreground"
 
   return (
-    <div className="flex gap-2 flex-row">
-      <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground">
-        <Bot className="h-4 w-4" />
-      </div>
-      <div className="max-w-[80%] rounded-lg px-3 py-2 text-sm bg-muted text-foreground">
+    <div className={`flex gap-2 flex-row${isInboxAi ? " w-full" : ""}`}>
+      {!isInboxAi && (
+        <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground">
+          <Bot className="h-4 w-4" />
+        </div>
+      )}
+      <div
+        className={`rounded-lg px-3 py-2 text-sm ${bubbleClass} ${
+          isInboxAi ? "mr-auto max-w-[85%]" : "max-w-[80%]"
+        }`}
+      >
         {isThinking ? (
           <StreamingThinkingBlock content={thinking} />
         ) : (
           <>
             {thinking && <ThinkingBlock content={thinking} />}
-            <MarkdownContent content={answer} />
+            <MarkdownContent
+              content={answer}
+              onOpenReference={onOpenReference}
+              wikiProjectPaths={wikiProjectPaths}
+            />
             <span className="animate-pulse">▊</span>
           </>
         )}
@@ -715,15 +810,28 @@ export function StreamingMessage({ content }: StreamingMessageProps) {
   )
 }
 
-function MarkdownContent({ content }: { content: string }) {
+function MarkdownContent({
+  content,
+  onOpenReference,
+  wikiProjectPaths,
+}: {
+  content: string
+  onOpenReference?: (
+    path: string,
+    title?: string,
+    meta?: WikiReferenceOpenMeta,
+  ) => void
+  wikiProjectPaths?: string[]
+}) {
   // Strip hidden comments
   const cleaned = content.replace(/<!--.*?-->/gs, "").trimEnd()
 
-  // Project path for resolving wiki-relative image src in chat
-  // replies (LLM may surface images that came in via retrieved
-  // chunks, e.g. when the chat answer cites a diagram from a wiki
-  // page). Same convention the file-preview uses.
-  const projectPath = useWikiStore((s) => s.project?.path ?? null)
+  const globalProjectPath = useWikiStore((s) => s.project?.path ?? null)
+  const projectPath = wikiProjectPaths?.[0] ?? globalProjectPath
+  const resolvePaths = useMemo(() => {
+    if (wikiProjectPaths?.length) return wikiProjectPaths
+    return globalProjectPath ? [globalProjectPath] : []
+  }, [globalProjectPath, wikiProjectPaths])
 
   // Separate thinking blocks from main content
   const { thinking, answer } = useMemo(() => separateThinking(cleaned), [cleaned])
@@ -748,7 +856,38 @@ function MarkdownContent({ content }: { content: string }) {
             a: ({ href, children }) => {
               if (href?.startsWith("wikilink:")) {
                 const pageName = href.slice("wikilink:".length)
-                return <WikiLink pageName={pageName}>{children}</WikiLink>
+                return (
+                  <WikiLink
+                    pageName={pageName}
+                    wikiProjectPaths={resolvePaths}
+                    onOpenReference={onOpenReference}
+                  >
+                    {children}
+                  </WikiLink>
+                )
+              }
+              if (href?.startsWith("http://") || href?.startsWith("https://")) {
+                return (
+                  <a
+                    href={href}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-primary underline hover:opacity-80"
+                  >
+                    {children}
+                  </a>
+                )
+              }
+              if (href && onOpenReference) {
+                return (
+                  <button
+                    type="button"
+                    onClick={() => onOpenReference(href, String(children))}
+                    className="inline text-primary underline decoration-primary/30 hover:opacity-80"
+                  >
+                    {children}
+                  </button>
+                )
               }
               return (
                 <span className="text-primary underline cursor-default" title={href}>
@@ -930,49 +1069,87 @@ function processContent(text: string): string {
   return result
 }
 
-function WikiLink({ pageName, children }: { pageName: string; children: React.ReactNode }) {
-  const project = useWikiStore((s) => s.project)
+function WikiLink({
+  pageName,
+  children,
+  wikiProjectPaths = [],
+  onOpenReference,
+}: {
+  pageName: string
+  children: React.ReactNode
+  wikiProjectPaths?: string[]
+  onOpenReference?: (
+    path: string,
+    title?: string,
+    meta?: WikiReferenceOpenMeta,
+  ) => void
+}) {
+  const globalProject = useWikiStore((s) => s.project?.path ?? null)
   const setSelectedFile = useWikiStore((s) => s.setSelectedFile)
   const setFileContent = useWikiStore((s) => s.setFileContent)
   const setActiveView = useWikiStore((s) => s.setActiveView)
   const [exists, setExists] = useState<boolean | null>(null)
   const resolvedPath = useRef<string | null>(null)
 
+  const searchPaths = useMemo(() => {
+    const paths = wikiProjectPaths.length
+      ? wikiProjectPaths
+      : globalProject
+        ? [globalProject]
+        : []
+    return paths.map((p) => normalizePath(p))
+  }, [globalProject, wikiProjectPaths])
+
   useEffect(() => {
-    if (!project) return
-    const pp = normalizePath(project.path)
-    const candidates = [
-      `${pp}/wiki/entities/${pageName}.md`,
-      `${pp}/wiki/concepts/${pageName}.md`,
-      `${pp}/wiki/sources/${pageName}.md`,
-      `${pp}/wiki/queries/${pageName}.md`,
-      `${pp}/wiki/comparisons/${pageName}.md`,
-      `${pp}/wiki/synthesis/${pageName}.md`,
-      `${pp}/wiki/${pageName}.md`,
-    ]
+    if (searchPaths.length === 0) {
+      resolvedPath.current = null
+      setExists(null)
+      return
+    }
 
     let cancelled = false
     async function check() {
-      for (const path of candidates) {
-        try {
-          await readFile(path)
-          if (!cancelled) {
-            resolvedPath.current = path
-            setExists(true)
-          }
+      for (const pp of searchPaths) {
+        const found = await resolveWikiPagePath(pageName, pp)
+        if (found && !cancelled) {
+          resolvedPath.current = found
+          setExists(true)
           return
-        } catch {
-          // try next
         }
       }
-      if (!cancelled) setExists(false)
+      if (!cancelled) {
+        resolvedPath.current = null
+        setExists(false)
+      }
     }
-    check()
-    return () => { cancelled = true }
-  }, [project, pageName])
+    void check()
+    return () => {
+      cancelled = true
+    }
+  }, [pageName, searchPaths])
 
   const handleClick = useCallback(async () => {
+    if (!resolvedPath.current) {
+      for (const pp of searchPaths) {
+        const found = await resolveWikiPagePath(pageName, pp)
+        if (found) {
+          resolvedPath.current = found
+          break
+        }
+      }
+    }
     if (!resolvedPath.current) return
+
+    const matchedProject =
+      searchPaths.find((pp) => resolvedPath.current!.startsWith(pp)) ??
+      searchPaths[0]
+
+    if (onOpenReference) {
+      onOpenReference(resolvedPath.current, pageName, {
+        projectPath: matchedProject,
+      })
+      return
+    }
     try {
       const content = await readFile(resolvedPath.current)
       setSelectedFile(resolvedPath.current)
@@ -981,7 +1158,14 @@ function WikiLink({ pageName, children }: { pageName: string; children: React.Re
     } catch {
       // ignore
     }
-  }, [setSelectedFile, setFileContent, setActiveView])
+  }, [
+    onOpenReference,
+    pageName,
+    searchPaths,
+    setSelectedFile,
+    setFileContent,
+    setActiveView,
+  ])
 
   if (exists === false) {
     return (

@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from "react"
-import { MoreHorizontal, Search } from "lucide-react"
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
+import { ChevronDown, ChevronRight, MoreHorizontal, Search } from "lucide-react"
 import { useTranslation } from "react-i18next"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -7,15 +7,72 @@ import type { DriverChat, DriverMessage } from "@/lib/driver-client"
 import type { CrossChatMessageHit } from "@/lib/unified-inbox-search"
 import type { InboxListFilter } from "@/lib/console-layout"
 import type { EscalationMuteEntry } from "@/lib/agent-config-client"
-import { InboxContextPanel } from "@/components/console/inbox-context-panel"
-import type { useInboxSessionContext } from "@/hooks/use-inbox-session-context"
+import { isMutedEntry, isTodoMuteEntry } from "@/lib/inbox-mute-badges"
+import { InboxComposeBar } from "@/components/console/inbox-compose-bar"
+import { InboxChatEmptyState } from "@/components/console/inbox-chat-empty-state"
+import { WechatChatChrome } from "@/components/wechat/wechat-window-controls"
+import { InboxMessageMedia } from "@/components/console/inbox-message-media"
+import { WechatEmojiText } from "@/components/console/wechat-emoji-text"
+import { AgentProxyToggle } from "@/components/console/agent-proxy-toggle"
+import { WeChatAvatar } from "@/components/console/wechat-avatar"
+import type { useAgentProxy } from "@/hooks/use-agent-proxy"
+import { useContactCache } from "@/hooks/use-contact-cache"
+import { useChatListLayout } from "@/hooks/use-chat-list-layout"
+import { useMaintainers } from "@/hooks/use-maintainers"
+import { ChatListItem } from "@/components/wechat/chat-list-item"
+import { ChatListContextMenu } from "@/components/wechat/chat-list-context-menu"
 import {
-  chatAvatarClass,
-  chatAvatarLetter,
+  ResizableHandle,
+  ResizablePanel,
+  ResizablePanelGroup,
+} from "@/components/ui/resizable"
+import {
+  defaultChatListPanelSize,
+  INBOX_MAIN_MIN_WIDTH,
+  resolveChatListPanelSizes,
+} from "@/lib/chat-list-layout"
+import {
+  applyChatListWidth,
+  currentChatListWidth,
+  persistChatListWidth,
+  readStoredChatListWidth,
+  setChatListDragActive,
+} from "@/lib/chat-list-width"
+import { messageDisplayBody } from "@/lib/wechat-message-body"
+import {
+  partitionChatsForDisplay,
+  sortChatsForDisplay,
+} from "@/lib/sort-chats-for-display"
+import {
+  contactKeysFromChats,
+  contactKeysFromMessages,
+} from "@/lib/contact-cache-keys"
+import {
   chatDisplayName,
-  highlightText,
+  formatMessageTime,
 } from "@/lib/wechat-ui"
+import { buildInboxImageGallery } from "@/lib/inbox-image-gallery"
+import {
+  MAX_COMPOSE_HEIGHT,
+  MIN_COMPOSE_HEIGHT,
+  persistComposeHeight,
+  readStoredComposeHeight,
+} from "@/lib/inbox-compose-height"
+import {
+  applyScrollTopWhenStable,
+  cancelScrollToBottom,
+  isNearScrollBottom,
+  scrollToBottomReliable,
+} from "@/lib/inbox-scroll-utils"
+import { buildInboxMessageRows } from "@/lib/inbox-message-time-divider"
+import { useLightboxStore } from "@/stores/lightbox-store"
 import { useConsoleStore } from "@/stores/console-store"
+import { isAiAssistPanelOpen, useAiAssistStore } from "@/stores/ai-assist-store"
+import { InboxAiAssistOverlay } from "@/components/wechat/inbox-ai-assist-overlay"
+import {
+  INBOX_AI_ASSIST_HOST_ID,
+  INBOX_AI_EXPAND_HOST_ID,
+} from "@/lib/inbox-ai-hosts"
 
 export type { InboxListFilter }
 
@@ -23,99 +80,466 @@ interface InboxChatShellProps {
   chats: DriverChat[]
   chatsLoading?: boolean
   messageHits?: CrossChatMessageHit[]
+  messageHitsLoading?: boolean
   selectedChat: DriverChat | null
   messages: DriverMessage[]
   messagesLoading: boolean
   listQuery: string
   onListQueryChange: (value: string) => void
-  messageQuery: string
-  onMessageQueryChange: (value: string) => void
   onSelectChat: (chat: DriverChat) => void
-  listFilter: InboxListFilter
-  onListFilterChange: (filter: InboxListFilter) => void
   muteByChatId: Map<string, EscalationMuteEntry>
-  todoCount: number
-  muteBusyChatId?: string | null
   onUnmuteChat?: (chatId: string) => void
   onMarkChatDone?: (chatId: string) => void
-  session: ReturnType<typeof useInboxSessionContext>
+  onMarkTodoChat?: (chatId: string, chatName: string) => void
+  onMuteChat?: (chatId: string, chatName: string) => void
+  agentProxy: ReturnType<typeof useAgentProxy>
+  onRefreshMessages: (chatId: string) => void
+  onBeforeSend?: (chatId: string, text: string) => string
+  onSendFailed?: (chatId: string, clientMsgId: string) => void
+  onComposeError?: (message: string) => void
+  loadingOlder?: boolean
+  hasMoreOlder?: boolean
+  onLoadOlderMessages?: () => Promise<boolean>
+  loadingNewer?: boolean
+  hasMoreNewer?: boolean
+  onLoadNewerMessages?: () => Promise<boolean>
+  messageViewMode?: "latest" | "around"
+  pendingScrollLocalId?: number | null
+  scrollRestoreTop?: number | null
+  onCaptureScrollMemory?: (
+    chatId: string,
+    scroll: { scrollTop: number; atBottom: boolean },
+  ) => void
+  onScrollRestoreApplied?: () => void
+  onClearPendingScroll?: () => void
+  onJumpToMessage?: (chat: DriverChat, localId: number) => void
+  onReturnToLatest?: () => void
   /** Shown when chat list is empty but services appear up (e.g. DB keys missing). */
   emptyListHint?: string
   onEmptyListAction?: () => void
   emptyListActionLabel?: string
 }
 
-function messageBody(m: DriverMessage): string {
-  return m.content?.trim() || `(${m.type ?? "media"})`
+function isMediaMessage(m: DriverMessage): boolean {
+  return (
+    m.mediaKind === "image" ||
+    m.mediaKind === "voice" ||
+    m.mediaKind === "video" ||
+    m.mediaKind === "emoji"
+  )
 }
 
-function muteTag(
+function muteSummary(
   entry: EscalationMuteEntry | undefined,
   t: (key: string) => string,
 ): string | null {
   if (!entry) return null
-  if (entry.reason === "escalate_a" || entry.reason === "escalate") {
-    return t("console.inbox.tagA")
-  }
-  if (entry.reason === "probe_b" || entry.reason === "probe_loop") {
-    return t("console.inbox.tagB")
-  }
-  return t("console.inbox.tagMute")
+  if (isTodoMuteEntry(entry)) return t("wechat.inbox.badgeTodo")
+  if (isMutedEntry(entry)) return t("wechat.inbox.badgeMuted")
+  return t("wechat.inbox.tagMute")
 }
 
 export function InboxChatShell({
   chats,
   chatsLoading = false,
   messageHits = [],
+  messageHitsLoading = false,
   selectedChat,
   messages,
   messagesLoading,
   listQuery,
   onListQueryChange,
-  messageQuery,
-  onMessageQueryChange,
   onSelectChat,
-  listFilter,
-  onListFilterChange,
   muteByChatId,
-  todoCount,
-  muteBusyChatId = null,
   onUnmuteChat,
   onMarkChatDone,
-  session,
+  onMarkTodoChat,
+  onMuteChat,
+  agentProxy,
+  onRefreshMessages,
+  onBeforeSend,
+  onSendFailed,
+  onComposeError,
+  loadingOlder = false,
+  hasMoreOlder = true,
+  onLoadOlderMessages,
+  loadingNewer = false,
+  hasMoreNewer = false,
+  onLoadNewerMessages,
+  messageViewMode = "latest",
+  pendingScrollLocalId = null,
+  scrollRestoreTop = null,
+  onCaptureScrollMemory,
+  onScrollRestoreApplied,
+  onClearPendingScroll,
+  onJumpToMessage,
+  onReturnToLatest,
   emptyListHint,
   onEmptyListAction,
   emptyListActionLabel,
 }: InboxChatShellProps) {
   const { t } = useTranslation()
-  const navigateBrain = useConsoleStore((s) => s.navigateBrain)
-  const navigateSystemWechat = useConsoleStore((s) => s.navigateSystemWechat)
+  const navigateContactProfile = useConsoleStore((s) => s.navigateContactProfile)
+  const aiPanelOpen = useAiAssistStore((s) => isAiAssistPanelOpen(s.layer))
   const messagesScrollRef = useRef<HTMLDivElement>(null)
+  const pendingScrollRestore = useRef<{ hOld: number; sOld: number } | null>(
+    null,
+  )
+  const scrollToBottomOnLoad = useRef(false)
+  const stickToBottomRef = useRef(true)
+  const lastScrollTopRef = useRef(0)
+  const prevSelectedChatIdRef = useRef<string | null>(null)
+  const loadingOlderRef = useRef(false)
+  const loadingNewerRef = useRef(false)
+  const [highlightLocalId, setHighlightLocalId] = useState<number | null>(null)
+  const [awayFromBottom, setAwayFromBottom] = useState(false)
   const [moreOpen, setMoreOpen] = useState(false)
+  const [chatContextMenu, setChatContextMenu] = useState<{
+    chatId: string
+    x: number
+    y: number
+  } | null>(null)
+  const storedComposeHeight = useMemo(() => readStoredComposeHeight(), [])
+  const composeHeightRef = useRef(storedComposeHeight)
+  const defaultComposeSize = useMemo(
+    () => `${storedComposeHeight}px`,
+    [storedComposeHeight],
+  )
+  const contacts = useContactCache()
+  const {
+    maintainers,
+    addMaintainer,
+    removeMaintainer,
+    isMaintainer: isMaintainerChat,
+  } = useMaintainers()
+  const {
+    preferences: chatLayout,
+    isPinnedSectionCollapsed,
+    togglePin,
+    setCollapsed: setPinnedSectionCollapsed,
+    isPinned,
+  } = useChatListLayout(contacts.loggedInUser)
 
   let filteredChats = chats
-
-  if (listFilter === "todo" || listFilter === "mute") {
-    filteredChats = filteredChats.filter((c) => muteByChatId.has(c.id))
-  }
 
   const selectedMute = selectedChat
     ? muteByChatId.get(selectedChat.id) ?? null
     : null
 
-  const msgQ = messageQuery.trim().toLowerCase()
-  const filteredMessages = msgQ
-    ? messages.filter((m) => messageBody(m).toLowerCase().includes(msgQ))
-    : messages
+  const maintainerIdSet = useMemo(
+    () => new Set(maintainers.map((m) => m.chatId).filter(Boolean)),
+    [maintainers],
+  )
 
-  const orderedMessages = [...filteredMessages].reverse()
+  const { pinnedSection, normalSection } = useMemo(() => {
+    const { pinnedSection: pinned, normalSection: normal } =
+      partitionChatsForDisplay(
+        filteredChats,
+        maintainerIdSet,
+        chatLayout.pinnedAt,
+      )
+    return {
+      pinnedSection: sortChatsForDisplay(pinned, maintainers, chatLayout),
+      normalSection: sortChatsForDisplay(normal, [], chatLayout),
+    }
+  }, [chatLayout, filteredChats, maintainerIdSet, maintainers])
+
+  const chatListItemProps = useCallback(
+    (chat: DriverChat) => {
+      const muteEntry = muteByChatId.get(chat.id)
+      const name = chatDisplayName(chat)
+      return {
+        showTodoBadge: isTodoMuteEntry(muteEntry),
+        showMutedBadge: isMutedEntry(muteEntry),
+        onMarkTodo: () => onMarkTodoChat?.(chat.id, name),
+        onMarkDone: () => onMarkChatDone?.(chat.id),
+        onMute: () => onMuteChat?.(chat.id, name),
+        onUnmute: () => onUnmuteChat?.(chat.id),
+      }
+    },
+    [muteByChatId, onMarkChatDone, onMarkTodoChat, onMuteChat, onUnmuteChat],
+  )
+
+  const openChatContextMenu = useCallback(
+    (chatId: string, event: React.MouseEvent<HTMLButtonElement>) => {
+      event.stopPropagation()
+      setChatContextMenu({
+        chatId,
+        x: event.clientX,
+        y: event.clientY,
+      })
+    },
+    [],
+  )
+
+  const contextMenuChat = chatContextMenu
+    ? filteredChats.find((c) => c.id === chatContextMenu.chatId)
+    : null
+
+  async function toggleMaintainerRole(chat: DriverChat) {
+    try {
+      if (isMaintainerChat(chat.id)) {
+        await removeMaintainer(chat.id)
+      } else {
+        await addMaintainer({
+          chatId: chat.id,
+          displayName: chatDisplayName(chat),
+        })
+      }
+    } catch (err) {
+      onComposeError?.(
+        err instanceof Error ? err.message : String(err),
+      )
+    }
+  }
+
+  const orderedMessages = [...messages].reverse()
+  const messageRows = useMemo(
+    () => buildInboxMessageRows(orderedMessages),
+    [orderedMessages],
+  )
+
+  useEffect(() => {
+    const prevId = prevSelectedChatIdRef.current
+    const el = messagesScrollRef.current
+    if (
+      prevId &&
+      prevId !== (selectedChat?.id ?? null) &&
+      el &&
+      onCaptureScrollMemory
+    ) {
+      onCaptureScrollMemory(prevId, {
+        scrollTop: el.scrollTop,
+        atBottom: isNearScrollBottom(el),
+      })
+    }
+    prevSelectedChatIdRef.current = selectedChat?.id ?? null
+    setAwayFromBottom(false)
+  }, [onCaptureScrollMemory, selectedChat?.id])
+
+  useLayoutEffect(() => {
+    if (scrollRestoreTop == null || messagesLoading) return
+    const el = messagesScrollRef.current
+    if (!el) return
+    applyScrollTopWhenStable(el, scrollRestoreTop)
+    onScrollRestoreApplied?.()
+  }, [messagesLoading, onScrollRestoreApplied, scrollRestoreTop])
+
+  const openInboxImageLightbox = useCallback(
+    (localId: number) => {
+      if (!selectedChat) return
+      const gallery = buildInboxImageGallery(selectedChat.id, orderedMessages)
+      if (gallery.length === 0) return
+      const index = gallery.findIndex(
+        (item) => item.id === `${selectedChat.id}:${localId}`,
+      )
+      useLightboxStore.getState().open({
+        items: gallery,
+        index: index >= 0 ? index : 0,
+      })
+    },
+    [orderedMessages, selectedChat],
+  )
+
+  const handleReturnToLatest = useCallback(() => {
+    scrollToBottomOnLoad.current = true
+    stickToBottomRef.current = true
+    setAwayFromBottom(false)
+    const el = messagesScrollRef.current
+    if (el) scrollToBottomReliable(el, "aggressive")
+    void Promise.resolve(onReturnToLatest?.()).finally(() => {
+      scrollToBottomOnLoad.current = true
+      stickToBottomRef.current = true
+      const target = messagesScrollRef.current
+      if (target) scrollToBottomReliable(target, "aggressive")
+    })
+  }, [onReturnToLatest])
+
+  useEffect(() => {
+    applyChatListWidth(readStoredChatListWidth())
+  }, [])
+
+  useEffect(() => {
+    if (pendingScrollLocalId != null) {
+      scrollToBottomOnLoad.current = false
+      stickToBottomRef.current = false
+      return
+    }
+    if (scrollRestoreTop != null) {
+      scrollToBottomOnLoad.current = false
+      stickToBottomRef.current = false
+      return
+    }
+    scrollToBottomOnLoad.current = true
+    stickToBottomRef.current = true
+  }, [pendingScrollLocalId, scrollRestoreTop, selectedChat?.id])
+
+  useEffect(() => {
+    if (chats.length === 0) return
+    void contacts.prefetch(contactKeysFromChats(chats))
+  }, [chats, contacts.prefetch])
+
+  useEffect(() => {
+    if (messages.length === 0) return
+    void contacts.prefetch(
+      contactKeysFromMessages(messages, [contacts.loggedInUser]),
+    )
+  }, [messages, contacts.loggedInUser, contacts.prefetch])
+
+  useLayoutEffect(() => {
+    const pending = pendingScrollRestore.current
+    if (!pending) return
+    const el = messagesScrollRef.current
+    if (!el) return
+    el.scrollTop = pending.sOld + (el.scrollHeight - pending.hOld)
+    pendingScrollRestore.current = null
+  }, [messages])
+
+  useLayoutEffect(() => {
+    if (pendingScrollLocalId == null || messagesLoading) return
+    const el = messagesScrollRef.current
+    if (!el) return
+    const target = el.querySelector(
+      `[data-local-id="${pendingScrollLocalId}"]`,
+    )
+    if (!(target instanceof HTMLElement)) {
+      onClearPendingScroll?.()
+      return
+    }
+    scrollToBottomOnLoad.current = false
+    target.scrollIntoView({ block: "center" })
+    setHighlightLocalId(pendingScrollLocalId)
+    onClearPendingScroll?.()
+    const timer = window.setTimeout(() => setHighlightLocalId(null), 2200)
+    return () => window.clearTimeout(timer)
+  }, [
+    pendingScrollLocalId,
+    orderedMessages,
+    messagesLoading,
+    onClearPendingScroll,
+  ])
 
   useEffect(() => {
     if (messagesLoading || !selectedChat) return
+    if (pendingScrollRestore.current) return
+    if (pendingScrollLocalId != null) return
+    if (scrollRestoreTop != null) return
+    if (messageViewMode === "around") return
     const el = messagesScrollRef.current
     if (!el) return
-    el.scrollTop = el.scrollHeight
-  }, [selectedChat?.id, orderedMessages, messagesLoading])
+    if (scrollToBottomOnLoad.current) {
+      scrollToBottomReliable(el, "aggressive")
+      scrollToBottomOnLoad.current = false
+      stickToBottomRef.current = true
+      lastScrollTopRef.current = el.scrollTop
+      return
+    }
+    if (stickToBottomRef.current && isNearScrollBottom(el)) {
+      scrollToBottomReliable(el, "gentle")
+      lastScrollTopRef.current = el.scrollTop
+    }
+  }, [
+    selectedChat?.id,
+    orderedMessages,
+    messagesLoading,
+    pendingScrollLocalId,
+    messageViewMode,
+    scrollRestoreTop,
+  ])
+
+  const handleMessagesScroll = () => {
+    const el = messagesScrollRef.current
+    if (!el) return
+
+    const nearBottom = isNearScrollBottom(el)
+    const scrollingUp = el.scrollTop < lastScrollTopRef.current - 2
+    lastScrollTopRef.current = el.scrollTop
+
+    if (scrollingUp) {
+      stickToBottomRef.current = false
+      cancelScrollToBottom(el)
+    } else if (nearBottom) {
+      stickToBottomRef.current = true
+    }
+
+    setAwayFromBottom(!nearBottom)
+    if (
+      !loadingOlder &&
+      !loadingOlderRef.current &&
+      hasMoreOlder &&
+      onLoadOlderMessages &&
+      el.scrollTop <= 80
+    ) {
+      pendingScrollRestore.current = {
+        hOld: el.scrollHeight,
+        sOld: el.scrollTop,
+      }
+      loadingOlderRef.current = true
+      void onLoadOlderMessages().finally(() => {
+        loadingOlderRef.current = false
+      })
+    }
+
+    if (
+      messageViewMode === "around" &&
+      !loadingNewer &&
+      !loadingNewerRef.current &&
+      hasMoreNewer &&
+      onLoadNewerMessages &&
+      isNearScrollBottom(el)
+    ) {
+      loadingNewerRef.current = true
+      void onLoadNewerMessages().finally(() => {
+        loadingNewerRef.current = false
+      })
+    }
+  }
+
+  const shellRef = useRef<HTMLDivElement>(null)
+  const storedListWidth = useMemo(() => readStoredChatListWidth(), [])
+  const defaultListSize = useMemo(
+    () => defaultChatListPanelSize(storedListWidth),
+    [storedListWidth],
+  )
+  const [listPanelSizes, setListPanelSizes] = useState(() =>
+    resolveChatListPanelSizes(960),
+  )
+
+  useLayoutEffect(() => {
+    applyChatListWidth(storedListWidth)
+  }, [storedListWidth])
+
+  useEffect(() => {
+    const el = shellRef.current
+    if (!el) return
+
+    const syncLayout = () => {
+      const width = el.getBoundingClientRect().width
+      setListPanelSizes(resolveChatListPanelSizes(width))
+    }
+
+    syncLayout()
+    const observer = new ResizeObserver(syncLayout)
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [])
+
+  const handleChatListResize = (panelSize: { inPixels: number }) => {
+    applyChatListWidth(panelSize.inPixels)
+  }
+
+  const handleChatListDragEnd = () => {
+    setChatListDragActive(false)
+    persistChatListWidth(currentChatListWidth())
+  }
+
+  const handleComposeResize = (panelSize: { inPixels: number }) => {
+    composeHeightRef.current = panelSize.inPixels
+  }
+
+  const handleComposeDragEnd = () => {
+    persistComposeHeight(composeHeightRef.current)
+  }
 
   useEffect(() => {
     if (!moreOpen) return
@@ -124,82 +548,81 @@ export function InboxChatShell({
     return () => document.removeEventListener("click", close)
   }, [moreOpen])
 
-  const hintText = selectedMute
-    ? selectedMute.reason === "escalate_a" || selectedMute.reason === "escalate"
-      ? t("console.inbox.hintEscalateA", {
-          name: selectedChat ? chatDisplayName(selectedChat) : "",
-        })
-      : t("console.inbox.hintProbeB")
-    : selectedChat
-      ? t("console.inbox.hintNormal")
-      : null
-
   return (
-    <div className="inbox-shell flex min-h-0 flex-1 overflow-hidden rounded-md border border-[var(--wx-border)]">
-      <aside className="flex w-[260px] shrink-0 flex-col border-r border-[var(--wx-border)] bg-[var(--wx-list-bg)]">
-        <div className="flex gap-1 border-b border-[var(--wx-border)] px-2 py-2">
-          {(
-            [
-              ["all", t("console.inbox.filterAll")],
-              ["todo", t("console.inbox.filterTodo", { count: todoCount })],
-              ["mute", t("console.inbox.filterMute")],
-            ] as const
-          ).map(([id, label]) => (
-            <button
-              key={id}
-              type="button"
-              onClick={() => onListFilterChange(id)}
-              className={`rounded-full px-2.5 py-1 text-xs transition-colors ${
-                listFilter === id
-                  ? "bg-foreground text-background"
-                  : "text-muted-foreground hover:bg-muted"
-              }`}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
+    <div ref={shellRef} className="flex min-h-0 flex-1 overflow-hidden">
+    <ResizablePanelGroup
+      direction="horizontal"
+      className="h-full min-h-0 flex-1"
+    >
+      <ResizablePanel
+        id="inbox-chat-list"
+        defaultSize={defaultListSize}
+        minSize={listPanelSizes.minSize}
+        maxSize={listPanelSizes.maxSize}
+        groupResizeBehavior="preserve-pixel-size"
+        className="flex min-h-0 min-w-0 flex-col"
+        onResize={handleChatListResize}
+      >
+      <aside className="relative flex h-full min-w-0 flex-col border-r border-[var(--wx-border)] bg-[var(--wx-list-bg)]">
         <div className="border-b border-[var(--wx-border)] bg-[var(--wx-search-bg)] p-3">
           <div className="relative">
             <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
             <Input
               value={listQuery}
               onChange={(e) => onListQueryChange(e.target.value)}
-              placeholder={t("console.inbox.searchChats")}
+              placeholder={t("wechat.inbox.searchChats")}
               className="h-8 border-0 bg-[var(--wx-search-input)] pl-8 text-sm shadow-none"
             />
           </div>
         </div>
-        <ul className="min-h-0 flex-1 overflow-auto">
-          {listQuery.trim().length >= 2 && messageHits.length > 0 && (
+        <ul
+          className={`min-h-0 flex-1 overflow-auto${aiPanelOpen ? " pointer-events-none" : ""}`}
+        >
+          {(messageHitsLoading || messageHits.length > 0) &&
+            listQuery.trim().length >= 1 && (
             <li className="border-b border-[var(--wx-border)] px-3 py-2">
               <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-                {t("console.inbox.messageHits")}
+                {t("wechat.inbox.messageHits")}
               </p>
+              {messageHitsLoading && messageHits.length === 0 ? (
+                <p className="px-1 py-1.5 text-xs text-muted-foreground">
+                  {t("wechat.inbox.searchingMessages")}
+                </p>
+              ) : (
               <ul className="space-y-1">
                 {messageHits.map((hit) => (
                   <li key={`${hit.chat.id}-${hit.message.localId ?? hit.snippet}`}>
                     <button
                       type="button"
-                      onClick={() => onSelectChat(hit.chat)}
+                      onClick={() => {
+                        const localId = hit.message.localId
+                        if (localId != null && onJumpToMessage) {
+                          onJumpToMessage(hit.chat, localId)
+                        } else {
+                          onSelectChat(hit.chat)
+                        }
+                      }}
                       className="w-full rounded-md px-1 py-1.5 text-left text-xs hover:bg-[var(--wx-list-hover)]"
                     >
                       <span className="font-medium">
                         {chatDisplayName(hit.chat)}
                       </span>
-                      <span className="mt-0.5 block truncate text-muted-foreground">
-                        {hit.snippet}
-                      </span>
+                      <WechatEmojiText
+                        text={hit.snippet}
+                        emojiSize={14}
+                        className="mt-0.5 block truncate text-muted-foreground"
+                      />
                     </button>
                   </li>
                 ))}
               </ul>
+              )}
             </li>
           )}
           {filteredChats.length === 0 ? (
             <li className="px-3 py-6 text-center text-sm text-muted-foreground">
               {chatsLoading ? (
-                t("console.inbox.loadingChats")
+                t("wechat.inbox.loadingChats")
               ) : emptyListHint ? (
                 <div className="space-y-3">
                   <p>{emptyListHint}</p>
@@ -210,278 +633,454 @@ export function InboxChatShell({
                   )}
                 </div>
               ) : messageHits.length > 0 ? (
-                t("console.inbox.noChatNameHits")
+                t("wechat.inbox.noChatNameHits")
               ) : (
-                t("console.inbox.noChatsYet")
+                t("wechat.inbox.noChatsYet")
               )}
             </li>
           ) : (
-            filteredChats.map((chat) => {
-              const active = selectedChat?.id === chat.id
-              const mute = muteByChatId.get(chat.id)
-              const tag = muteTag(mute, t)
-              return (
-                <li key={chat.id}>
+            <>
+              {pinnedSection.length > 0 && (
+                <li className="border-b border-[var(--wx-border)]">
                   <button
                     type="button"
-                    onClick={() => onSelectChat(chat)}
-                    className={`flex w-full gap-2.5 border-b border-[var(--wx-border)] px-3 py-3 text-left transition-colors hover:bg-[var(--wx-list-hover)] ${
-                      active ? "bg-[var(--wx-list-active)]" : ""
-                    }`}
+                    className="flex w-full items-center gap-1 px-3 py-1.5 text-[11px] font-medium text-[var(--wx-muted)] hover:bg-[var(--wx-list-hover)] hover:text-[var(--wx-text)]"
+                    onClick={() =>
+                      setPinnedSectionCollapsed(!isPinnedSectionCollapsed)
+                    }
                   >
-                    <span
-                      className={`flex h-10 w-10 shrink-0 items-center justify-center rounded text-sm font-semibold text-white ${chatAvatarClass(chat.id)}`}
-                    >
-                      {chatAvatarLetter(chat)}
-                    </span>
-                    <span className="min-w-0 flex-1">
-                      <span className="flex items-center justify-between gap-2">
-                        <span className="truncate text-sm font-medium text-[var(--wx-text)]">
-                          {chatDisplayName(chat)}
-                        </span>
-                        {tag && (
-                          <span className="shrink-0 rounded border px-1.5 py-0.5 text-[10px] font-medium">
-                            {tag}
-                          </span>
-                        )}
-                      </span>
-                      {chat.lastMessagePreview && (
-                        <span className="mt-0.5 block truncate text-xs text-[var(--wx-muted)]">
-                          {chat.lastMessagePreview}
-                        </span>
-                      )}
+                    {isPinnedSectionCollapsed ? (
+                      <ChevronRight className="h-3 w-3 shrink-0" />
+                    ) : (
+                      <ChevronDown className="h-3 w-3 shrink-0" />
+                    )}
+                    <span>
+                      {t("wechat.inbox.pinnedSection", {
+                        count: pinnedSection.length,
+                      })}
                     </span>
                   </button>
+                  {!isPinnedSectionCollapsed && (
+                    <ul>
+                      {pinnedSection.map((chat) => {
+                        const muteProps = chatListItemProps(chat)
+                        return (
+                        <ChatListItem
+                          key={chat.id}
+                          chat={chat}
+                          isActive={selectedChat?.id === chat.id}
+                          isMaintainer={isMaintainerChat(chat.id)}
+                          isPinned={isPinned(chat.id)}
+                          showTodoBadge={muteProps.showTodoBadge}
+                          showMutedBadge={muteProps.showMutedBadge}
+                          onClick={() => onSelectChat(chat)}
+                          onContextMenu={(e) => openChatContextMenu(chat.id, e)}
+                        />
+                        )
+                      })}
+                    </ul>
+                  )}
                 </li>
-              )
-            })
+              )}
+              {normalSection.map((chat) => {
+                const muteProps = chatListItemProps(chat)
+                return (
+                <ChatListItem
+                  key={chat.id}
+                  chat={chat}
+                  isActive={selectedChat?.id === chat.id}
+                  isMaintainer={isMaintainerChat(chat.id)}
+                  isPinned={false}
+                  showTodoBadge={muteProps.showTodoBadge}
+                  showMutedBadge={muteProps.showMutedBadge}
+                  onClick={() => onSelectChat(chat)}
+                  onContextMenu={(e) => openChatContextMenu(chat.id, e)}
+                />
+                )
+              })}
+            </>
           )}
         </ul>
+        {chatContextMenu && contextMenuChat && (() => {
+          const muteProps = chatListItemProps(contextMenuChat)
+          return (
+            <ChatListContextMenu
+              x={chatContextMenu.x}
+              y={chatContextMenu.y}
+              isMaintainer={isMaintainerChat(contextMenuChat.id)}
+              isPinned={isPinned(contextMenuChat.id)}
+              isTodo={muteProps.showTodoBadge}
+              isMuted={muteProps.showTodoBadge || muteProps.showMutedBadge}
+              onClose={() => setChatContextMenu(null)}
+              onTogglePin={() => togglePin(contextMenuChat.id)}
+              onToggleMaintainer={() =>
+                void toggleMaintainerRole(contextMenuChat)
+              }
+              onMarkTodo={muteProps.onMarkTodo}
+              onMarkDone={muteProps.onMarkDone}
+              onMute={muteProps.onMute}
+              onUnmute={muteProps.onUnmute}
+            />
+          )
+        })()}
+        <div
+          id={INBOX_AI_ASSIST_HOST_ID}
+          className="inbox-ai-panel-host"
+        />
       </aside>
+      </ResizablePanel>
 
-      <main className="flex min-w-0 flex-1 flex-col bg-[var(--wx-chat-bg)]">
+      <ResizableHandle
+        withHandle={false}
+        className="inbox-chat-split-handle w-px min-w-px max-w-px shrink-0 bg-[var(--wx-border)] transition-colors hover:bg-[var(--wx-accent)]/30"
+        onPointerDown={() => setChatListDragActive(true)}
+        onPointerUp={handleChatListDragEnd}
+        onPointerCancel={handleChatListDragEnd}
+      />
+
+      <ResizablePanel
+        id="inbox-chat-main"
+        minSize={`${INBOX_MAIN_MIN_WIDTH}px`}
+        className="flex min-h-0 min-w-0 flex-col overflow-hidden"
+      >
+      <main className="inbox-chat-main flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-[var(--wx-chat-bg)]">
         {!selectedChat ? (
-          <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">
-            {t("console.wechat.selectChat")}
+          <div className="flex h-full min-h-0 flex-col overflow-hidden">
+            <WechatChatChrome />
+            <InboxChatEmptyState />
           </div>
         ) : (
-          <>
-            <header className="flex shrink-0 items-center gap-2 border-b border-[var(--wx-border)] bg-[var(--wx-header-bg)] px-4 py-3">
-              <span
-                className={`flex h-9 w-9 shrink-0 items-center justify-center rounded text-sm font-semibold text-white ${chatAvatarClass(selectedChat.id)}`}
-              >
-                {chatAvatarLetter(selectedChat)}
-              </span>
+          <div className="relative flex h-full min-h-0 flex-col overflow-hidden">
+            <div
+              id={INBOX_AI_EXPAND_HOST_ID}
+              className="inbox-ai-expand-host"
+            />
+            <WechatChatChrome>
+            <header className="inbox-chat-header z-10 flex shrink-0 items-center gap-3 bg-transparent px-4 py-2.5">
+              <WeChatAvatar
+                size="md"
+                smallHeadUrl={selectedChat.smallHeadUrl}
+                colorKey={selectedChat.id}
+                letter={chatDisplayName(selectedChat)}
+              />
               <div className="min-w-0 flex-1">
                 <h2 className="truncate text-sm font-medium text-[var(--wx-text)]">
                   {chatDisplayName(selectedChat)}
                 </h2>
                 {selectedMute && (
-                  <p className="truncate text-xs text-muted-foreground">
-                    {muteTag(selectedMute, t)} ·{" "}
-                    {t("console.inbox.muteRemaining", {
-                      hours: Math.max(
-                        0,
-                        Math.ceil(
-                          (selectedMute.muted_until - Date.now()) /
-                            (60 * 60 * 1000),
-                        ),
-                      ),
-                    })}
+                  <p className="truncate text-[11px] text-[var(--wx-muted)]">
+                    {muteSummary(selectedMute, t)}
                   </p>
                 )}
               </div>
-              <Button
-                size="sm"
-                variant="outline"
-                className="h-7 text-xs"
-                onClick={() => navigateBrain("routing")}
-              >
-                {t("console.inbox.routing")}
-              </Button>
+              <AgentProxyToggle
+                proxy={agentProxy}
+                isGroup={Boolean(selectedChat.isGroup)}
+                variant="topbar"
+              />
               <div className="relative">
                 <Button
                   size="sm"
                   variant="ghost"
-                  className="h-7 w-7 p-0"
+                  className="h-8 w-8 p-0"
                   onClick={(e) => {
                     e.stopPropagation()
                     setMoreOpen((v) => !v)
                   }}
+                  aria-label={t("wechat.inbox.moreMenu")}
                 >
-                  <MoreHorizontal className="h-4 w-4" />
+                  <MoreHorizontal className="h-4 w-4 text-[var(--wx-muted)]" />
                 </Button>
                 {moreOpen && (
                   <div
-                    className="absolute right-0 top-full z-20 mt-1 min-w-[180px] rounded-md border bg-popover py-1 shadow-md"
+                    className="absolute right-0 top-full z-20 mt-1 min-w-[200px] rounded-lg border border-[var(--wx-border)] bg-[var(--wechat-dark-panel)] py-1 shadow-xl"
                     onClick={(e) => e.stopPropagation()}
                   >
+                    {selectedMute && onUnmuteChat && (
+                      <button
+                        type="button"
+                        className="block w-full px-3 py-2 text-left text-sm text-[var(--wx-text)] hover:bg-[var(--wx-list-hover)]"
+                        onClick={() => {
+                          setMoreOpen(false)
+                          onUnmuteChat(selectedChat.id)
+                        }}
+                      >
+                        {t("wechat.inbox.unmute")}
+                      </button>
+                    )}
+                    {selectedMute && onMarkChatDone && (
+                      <button
+                        type="button"
+                        className="block w-full px-3 py-2 text-left text-sm text-[var(--wx-text)] hover:bg-[var(--wx-list-hover)]"
+                        onClick={() => {
+                          setMoreOpen(false)
+                          onMarkChatDone(selectedChat.id)
+                        }}
+                      >
+                        {t("wechat.inbox.markDone")}
+                      </button>
+                    )}
+                    {!selectedChat.isGroup && (
+                      <button
+                        type="button"
+                        className="block w-full px-3 py-2 text-left text-sm text-[var(--wx-text)] hover:bg-[var(--wx-list-hover)]"
+                        onClick={() => {
+                          setMoreOpen(false)
+                          const username =
+                            selectedChat.username?.trim() || selectedChat.id
+                          navigateContactProfile(username)
+                        }}
+                      >
+                        {t("wechat.inbox.moreViewContactCard")}
+                      </button>
+                    )}
                     <button
                       type="button"
-                      className="block w-full px-3 py-2 text-left text-xs hover:bg-muted"
-                      onClick={() => {
-                        setMoreOpen(false)
-                        navigateSystemWechat(true)
-                      }}
-                    >
-                      {t("console.inbox.moreWechatConnect")}
-                    </button>
-                    <button
-                      type="button"
-                      className="block w-full px-3 py-2 text-left text-xs hover:bg-muted"
+                      className="block w-full px-3 py-2 text-left text-sm text-[var(--wx-muted)] hover:bg-[var(--wx-list-hover)]"
                       onClick={() => {
                         setMoreOpen(false)
                         void navigator.clipboard.writeText(selectedChat.id)
                       }}
                     >
-                      {t("console.inbox.moreCopyChatId")}
-                    </button>
-                    <button
-                      type="button"
-                      className="block w-full px-3 py-2 text-left text-xs hover:bg-muted"
-                      onClick={() => {
-                        setMoreOpen(false)
-                        navigateBrain("kb")
-                      }}
-                    >
-                      {t("console.inbox.moreEditKb")}
+                      {t("wechat.inbox.moreCopyChatId")}
                     </button>
                   </div>
                 )}
               </div>
             </header>
+            </WechatChatChrome>
 
-            {hintText && (
+            <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
               <div
-                className={`shrink-0 border-b px-4 py-2.5 text-xs ${
-                  selectedMute
-                    ? "border-amber-500/20 bg-amber-500/10 text-amber-900 dark:text-amber-100"
-                    : "bg-muted/40 text-muted-foreground"
-                }`}
-              >
-                {hintText}
-              </div>
-            )}
-
-            <div className="border-b border-[var(--wx-border)] bg-[var(--wx-search-bg)] px-4 py-2">
-              <div className="relative max-w-md">
-                <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-                <Input
-                  value={messageQuery}
-                  onChange={(e) => onMessageQueryChange(e.target.value)}
-                  placeholder={t("console.wechat.searchMessages")}
-                  className="h-8 border-0 bg-[var(--wx-search-input)] pl-8 text-sm shadow-none"
-                />
-              </div>
-            </div>
-
-            <div
-              ref={messagesScrollRef}
-              className="min-h-0 flex-1 overflow-auto px-4 py-4"
-            >
+                id="inbox-compose-expand-host"
+                className="pointer-events-none absolute inset-0 z-10"
+              />
+                <ResizablePanelGroup
+                  direction="vertical"
+                  className="h-full min-h-0 flex-1"
+                >
+                <ResizablePanel
+                  id="inbox-messages"
+                  minSize="120px"
+                  className="flex min-h-0 min-w-0 flex-col"
+                >
+                  <div className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+                    <div
+                      ref={messagesScrollRef}
+                      className="inbox-messages-scroll min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-3 py-3"
+                      onScroll={handleMessagesScroll}
+                    >
+              {loadingOlder && (
+                <p className="mb-3 text-center text-xs text-[var(--wx-muted)]">
+                  {t("wechat.inbox.loadingOlderMessages")}
+                </p>
+              )}
               {messagesLoading ? (
-                <p className="text-center text-sm text-muted-foreground">
-                  {t("console.wechat.loadingMessages")}
+                <p className="text-center text-sm text-[var(--wx-muted)]">
+                  {t("wechat.inbox.loadingMessages")}
                 </p>
               ) : orderedMessages.length === 0 ? (
-                <p className="text-center text-sm text-muted-foreground">
-                  {msgQ
-                    ? t("console.wechat.noSearchResults")
-                    : t("console.wechat.noMessages")}
+                <p className="text-center text-sm text-[var(--wx-muted)]">
+                  {t("wechat.inbox.noMessages")}
                 </p>
               ) : (
-                <ul className="space-y-3">
-                  {orderedMessages.map((m, i) => {
-                    const body = messageBody(m)
+                <ul className="w-full space-y-3">
+                  {messageRows.map((row) => {
+                    if (row.kind === "divider" || row.kind === "system") {
+                      const sysLocalId =
+                        row.kind === "system" ? row.message.localId : undefined
+                      const highlighted =
+                        sysLocalId != null && highlightLocalId === sysLocalId
+                      return (
+                        <li
+                          key={row.key}
+                          className="inbox-time-divider"
+                          data-local-id={sysLocalId}
+                        >
+                          <span className={highlighted ? "wx-message-highlight" : undefined}>
+                            {row.label}
+                          </span>
+                        </li>
+                      )
+                    }
+
+                    const m = row.message
+                    const i = row.index
+                    const body = messageDisplayBody(m, t)
+                    const mediaOnly = isMediaMessage(m)
                     const self = Boolean(m.isSelf)
+                    const isPending = Boolean(m.pending)
+                    const isGroup = Boolean(selectedChat.isGroup)
+                    const peerContact = !self && m.sender
+                      ? contacts.getContact(m.sender)
+                      : undefined
+                    const avatarUrl = self
+                      ? contacts.loggedInContact?.smallHeadUrl
+                      : isGroup
+                        ? peerContact?.smallHeadUrl
+                        : selectedChat.smallHeadUrl ?? peerContact?.smallHeadUrl
+                    const avatarKey = self
+                      ? contacts.loggedInUser ?? selectedChat.id
+                      : m.sender ?? selectedChat.id
+                    const avatarLetter = self
+                      ? contacts.loggedInDisplayName ??
+                        t("wechat.inbox.bubbleSelf")
+                      : isGroup
+                        ? m.senderName ??
+                          (peerContact
+                            ? contacts.contactDisplayName(peerContact)
+                            : t("wechat.inbox.msgOther"))
+                        : chatDisplayName(selectedChat)
+                    const displayName = self
+                      ? contacts.loggedInDisplayName ??
+                        t("wechat.inbox.bubbleSelf")
+                      : isGroup
+                        ? m.senderName ??
+                          (peerContact
+                            ? contacts.contactDisplayName(peerContact)
+                            : m.sender ?? "")
+                        : chatDisplayName(selectedChat)
+                    const timeLabel = m.timestamp
+                      ? formatMessageTime(m.timestamp)
+                      : ""
+                    const metaLabel = self
+                      ? agentProxy.agentProxyEnabled
+                        ? `${t("wechat.inbox.bubbleAuto")}${timeLabel ? ` · ${timeLabel}` : ""}`
+                        : `${t("wechat.inbox.bubbleSelf")}${timeLabel ? ` · ${timeLabel}` : ""}`
+                      : timeLabel
+
                     return (
                       <li
-                        key={`${m.localId ?? i}`}
-                        className={`flex items-start gap-2 ${self ? "flex-row-reverse" : ""}`}
+                        key={m.clientMsgId ?? m.localId ?? i}
+                        data-local-id={m.pending ? undefined : m.localId}
+                        data-client-msg-id={m.clientMsgId}
+                        className={`flex w-full items-start gap-2 ${self ? "flex-row-reverse" : ""}${
+                          highlightLocalId === m.localId && mediaOnly
+                            ? " wx-message-highlight-media"
+                            : ""
+                        }${isPending ? " opacity-70" : ""}`}
                       >
-                        <span
-                          className={`flex h-9 w-9 shrink-0 items-center justify-center rounded text-xs font-medium ${
-                            self
-                              ? "bg-[var(--wx-avatar-self)] text-[var(--wx-bubble-self-text)]"
-                              : "bg-[var(--wx-avatar-other)] text-white"
-                          }`}
-                        >
-                          {self
-                            ? t("console.inbox.avatarAuto").slice(0, 1)
-                            : t("console.wechat.msgOther").slice(0, 1)}
-                        </span>
+                        <WeChatAvatar
+                          size="md"
+                          smallHeadUrl={avatarUrl}
+                          colorKey={avatarKey}
+                          letter={avatarLetter}
+                        />
                         <div
-                          className={`max-w-[min(72%,28rem)] rounded px-3 py-2 text-sm leading-relaxed ${
-                            self
-                              ? "bg-[var(--wx-bubble-self)] text-[var(--wx-bubble-self-text)]"
-                              : "border border-[var(--wx-bubble-other-border)] bg-[var(--wx-bubble-other)] text-[var(--wx-bubble-other-text)]"
-                          }`}
+                          className={`flex w-fit max-w-[85%] flex-col gap-0.5 ${self ? "items-end" : "items-start"}`}
                         >
-                          {msgQ ? (
-                            <span
-                              className="whitespace-pre-wrap break-words"
-                              dangerouslySetInnerHTML={{
-                                __html: highlightText(body, messageQuery),
-                              }}
-                            />
-                          ) : (
-                            <span className="whitespace-pre-wrap break-words">
-                              {body}
+                          {isGroup && !self && displayName && (
+                            <span className="px-1 text-[11px] text-[var(--wx-muted)]">
+                              {displayName}
                             </span>
                           )}
-                          {m.timestamp && (
-                            <span
-                              className={`mt-1 block text-[10px] ${
-                                self
-                                  ? "text-[var(--wx-bubble-self-meta)]"
-                                  : "text-[var(--wx-bubble-other-meta)]"
-                              }`}
-                            >
-                              {self
-                                ? `${t("console.inbox.bubbleAuto")} · ${m.timestamp}`
-                                : m.timestamp}
-                            </span>
-                          )}
+                          <div
+                            className={`w-fit max-w-full overflow-hidden text-sm leading-relaxed ${
+                              mediaOnly
+                                ? "rounded-none border-0 bg-transparent p-0"
+                                : `rounded px-3 py-2 ${
+                                    self
+                                      ? "bg-[var(--wx-bubble-self)] text-[var(--wx-bubble-self-text)]"
+                                      : "border border-[var(--wx-bubble-other-border)] bg-[var(--wx-bubble-other)] text-[var(--wx-bubble-other-text)]"
+                                  }${
+                                    highlightLocalId === m.localId
+                                      ? " wx-message-highlight"
+                                      : ""
+                                  }`
+                            }`}
+                          >
+                            {mediaOnly && selectedChat ? (
+                              <InboxMessageMedia
+                                chatId={selectedChat.id}
+                                message={m}
+                                fallbackLabel={body}
+                                onImageClick={openInboxImageLightbox}
+                              />
+                            ) : (
+                              <WechatEmojiText
+                                text={body}
+                                emojiSize={20}
+                                className="whitespace-pre-wrap break-words"
+                              />
+                            )}
+                            {metaLabel && !mediaOnly && (
+                              <span
+                                className={`mt-1 block text-[10px] ${
+                                  self
+                                    ? "text-[var(--wx-bubble-self-meta)]"
+                                    : "text-[var(--wx-bubble-other-meta)]"
+                                }`}
+                              >
+                                {metaLabel}
+                              </span>
+                            )}
+                          </div>
                         </div>
                       </li>
                     )
                   })}
                 </ul>
               )}
-            </div>
+              {loadingNewer && (
+                <p className="mt-3 text-center text-xs text-[var(--wx-muted)]">
+                  {t("wechat.inbox.loadingNewerMessages")}
+                </p>
+              )}
+                    </div>
+                    {awayFromBottom && onReturnToLatest && (
+                      <button
+                        type="button"
+                        className="absolute bottom-3 right-4 z-20 flex items-center gap-1 rounded-full border border-[var(--wx-border)] bg-[var(--wx-header-bg)] px-3 py-1.5 text-xs text-[var(--wx-accent)] shadow-md transition-colors hover:bg-[var(--wx-list-hover)]"
+                        aria-label={t("wechat.inbox.returnToLatest")}
+                        title={t("wechat.inbox.returnToLatest")}
+                        onClick={handleReturnToLatest}
+                      >
+                        <ChevronDown className="h-3.5 w-3.5 shrink-0" />
+                        <span>{t("wechat.inbox.returnToLatest")}</span>
+                      </button>
+                    )}
+                  </div>
+                </ResizablePanel>
 
-            <footer className="shrink-0 border-t border-[var(--wx-border)] bg-[var(--wx-header-bg)] px-4 py-3 text-center text-xs text-muted-foreground">
-              {t("console.inbox.readonlyFooter")}
-            </footer>
-          </>
+                <ResizableHandle
+                  withHandle={false}
+                  className="inbox-compose-split-handle shrink-0"
+                  onPointerUp={handleComposeDragEnd}
+                  onPointerCancel={handleComposeDragEnd}
+                />
+
+                <ResizablePanel
+                  id="inbox-compose"
+                  defaultSize={defaultComposeSize}
+                  minSize={`${MIN_COMPOSE_HEIGHT}px`}
+                  maxSize={`${MAX_COMPOSE_HEIGHT}px`}
+                  groupResizeBehavior="preserve-pixel-size"
+                  className="flex min-h-0 min-w-0 flex-col"
+                  onResize={handleComposeResize}
+                >
+                  <InboxComposeBar
+                    chat={selectedChat}
+                    agentProxyEnabled={agentProxy.agentProxyEnabled}
+                    agentProxyBusy={agentProxy.busy}
+                    onBeforeSend={onBeforeSend}
+                    onSendFailed={onSendFailed}
+                    onSent={() => onRefreshMessages(selectedChat.id)}
+                    onError={onComposeError}
+                    onJumpToMessage={
+                      onJumpToMessage
+                        ? (localId) => onJumpToMessage(selectedChat, localId)
+                        : undefined
+                    }
+                  />
+                </ResizablePanel>
+              </ResizablePanelGroup>
+            </div>
+          </div>
         )}
       </main>
-
-      <InboxContextPanel
-        chat={selectedChat}
-        muteEntry={selectedMute}
-        session={session}
-        muteBusy={
-          Boolean(selectedChat && muteBusyChatId === selectedChat.id)
-        }
-        onUnmute={
-          selectedChat && selectedMute && onUnmuteChat
-            ? () => onUnmuteChat(selectedChat.id)
-            : undefined
-        }
-        onMarkDone={
-          selectedChat && selectedMute && onMarkChatDone
-            ? () => onMarkChatDone(selectedChat.id)
-            : undefined
-        }
-        onEditRouting={
-          selectedMute &&
-          (selectedMute.reason === "escalate_a" ||
-            selectedMute.reason === "escalate")
-            ? () => navigateBrain("routing")
-            : undefined
-        }
-      />
+      </ResizablePanel>
+    </ResizablePanelGroup>
+    <InboxAiAssistOverlay />
     </div>
   )
 }

@@ -4,6 +4,12 @@ import type { DriverMessage } from "@/lib/driver-client"
 
 export type ChatProfile = {
   tags: string[]
+  userType?: string | null
+}
+
+export type ChatProfilePatch = {
+  userType?: string | null
+  tags?: string[]
 }
 
 export type ChatEscalationState = {
@@ -15,6 +21,14 @@ export async function readChatProfile(chatId: string): Promise<ChatProfile> {
   return invoke<ChatProfile>("read_chat_profile", { chatId })
 }
 
+export async function patchChatProfile(
+  chatId: string,
+  patch: ChatProfilePatch,
+): Promise<ChatProfile> {
+  return invoke<ChatProfile>("patch_chat_profile", { chatId, patch })
+}
+
+/** @deprecated prefer patchChatProfile({ tags }) */
 export async function writeChatProfile(
   chatId: string,
   tags: string[],
@@ -89,4 +103,11 @@ export function lastMessageTimestamp(messages: DriverMessage[]): string | null {
     if (ts) return ts
   }
   return null
+}
+
+export function messageTimestampMs(message: DriverMessage): number | undefined {
+  const ts = message.timestamp?.trim()
+  if (!ts) return undefined
+  const ms = Date.parse(ts)
+  return Number.isNaN(ms) ? undefined : ms
 }

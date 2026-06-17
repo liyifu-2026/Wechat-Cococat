@@ -18,10 +18,11 @@ import {
   type StackTab,
 } from "@/lib/console-layout"
 import {
-  stackCommand,
-  type StackAction,
-  type StackService,
-} from "@/lib/stack-client"
+  runStackOrchestrator,
+  type StackOrchestratorPhase,
+  type StackOrchestratorProgress,
+} from "@/lib/stack-orchestrator"
+import type { StackHealthService } from "@/lib/stack-client"
 import { STACK_CLI_HINTS, copyText, type ServiceHealth } from "@/lib/stack-status"
 import { CONSOLE_PANEL } from "@/lib/console-ui"
 import { useConsoleStore } from "@/stores/console-store"
@@ -29,7 +30,7 @@ import { cn } from "@/lib/utils"
 
 type ServiceState = {
   label: string
-  service: "driver" | "memory" | "agent"
+  service: StackOrchestratorPhase
   status: string
   health: ServiceHealth
 }
@@ -40,8 +41,49 @@ const SERVICES: Omit<ServiceState, "status" | "health">[] = [
   { label: "Agent", service: "agent" },
 ]
 
+const PHASE_LABEL_KEYS: Record<
+  StackOrchestratorPhase,
+  "console.stack.phaseDriver" | "console.stack.phaseMemory" | "console.stack.phaseAgent"
+> = {
+  driver: "console.stack.phaseDriver",
+  memory: "console.stack.phaseMemory",
+  agent: "console.stack.phaseAgent",
+}
+
 function isMemorySetupError(status: string): boolean {
   return /gateway|TencentDB|clone/i.test(status)
+}
+
+function StackProgressBar({
+  percent,
+  label,
+}: {
+  percent: number
+  label: string
+}) {
+  return (
+    <div className="space-y-2 rounded-lg border bg-muted/20 p-4">
+      <div className="flex items-center justify-between gap-2 text-sm">
+        <span className="font-medium">{label}</span>
+        <span className="text-xs tabular-nums text-muted-foreground">
+          {Math.round(percent)}%
+        </span>
+      </div>
+      <div
+        className="h-2 w-full overflow-hidden rounded-full bg-muted"
+        role="progressbar"
+        aria-valuenow={Math.round(percent)}
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-label={label}
+      >
+        <div
+          className="h-full rounded-full bg-primary transition-[width] duration-300 ease-out"
+          style={{ width: `${Math.min(100, Math.max(0, percent))}%` }}
+        />
+      </div>
+    </div>
+  )
 }
 
 type StackModuleProps = {
@@ -73,20 +115,28 @@ export function StackModule({ embedded = false, forcedTab }: StackModuleProps = 
       })),
     [health],
   )
+
+  const [orchestrator, setOrchestrator] = useState<StackOrchestratorProgress | null>(
+    null,
+  )
   const [log, setLog] = useState<string | null>(null)
-  const [lastAction, setLastAction] = useState<StackAction | null>(null)
-  const [lastService, setLastService] = useState<StackService | null>(null)
   const [logFailed, setLogFailed] = useState(false)
+  const [lastAction, setLastAction] = useState<"start" | "stop" | null>(null)
   const [agentLog, setAgentLog] = useState("")
-  const [busy, setBusy] = useState(false)
   const [copied, setCopied] = useState(false)
-  const [focusedService, setFocusedService] = useState<StackService | null>(null)
-  const cardRefs = useRef<Partial<Record<StackService, HTMLDivElement | null>>>({})
+  const [focusedService, setFocusedService] = useState<StackHealthService | null>(
+    null,
+  )
+  const cardRefs = useRef<Partial<Record<StackHealthService, HTMLDivElement | null>>>(
+    {},
+  )
+
+  const busy = orchestrator !== null && orchestrator.percent < 100
 
   useEffect(() => {
     if (!pendingStackTab && !highlightStackService) return
     if (pendingStackTab) setActiveTab(pendingStackTab)
-    if (highlightStackService) {
+    if (highlightStackService && highlightStackService !== "all") {
       setFocusedService(highlightStackService)
       const el = cardRefs.current[highlightStackService]
       el?.scrollIntoView({ behavior: "smooth", block: "nearest" })
@@ -114,29 +164,37 @@ export function StackModule({ embedded = false, forcedTab }: StackModuleProps = 
     void refreshAgentLog()
   }, [refreshAgentLog])
 
-  async function run(action: StackAction, service: StackService) {
-    setBusy(true)
+  async function runOrchestrator(action: "start" | "stop") {
     setLog(null)
     setLogFailed(false)
     setLastAction(action)
-    setLastService(service)
-    try {
-      const out = await stackCommand(service, action)
-      setLog(out)
-      await refreshAll()
-    } catch (err) {
-      setLogFailed(true)
-      setLog(err instanceof Error ? err.message : String(err))
-      await refreshAll()
-    } finally {
-      setBusy(false)
-    }
+    setOrchestrator({
+      action,
+      phase: action === "start" ? "driver" : "agent",
+      step: 1,
+      totalSteps: 3,
+      percent: 0,
+      logs: [],
+    })
+
+    const result = await runStackOrchestrator(action, (progress) => {
+      setOrchestrator(progress)
+    })
+
+    setOrchestrator((prev) =>
+      prev
+        ? { ...prev, phase: null, step: 3, percent: 100, logs: result.logs }
+        : null,
+    )
+    setLog(result.logs.join("\n\n") || null)
+    setLogFailed(!result.ok)
+    await refreshAll()
+    window.setTimeout(() => setOrchestrator(null), result.ok ? 800 : 0)
   }
 
   async function copyCliHint() {
-    if (!lastAction || !lastService || lastAction === "status") return
-    const svc = lastService === "all" ? "all" : lastService
-    const hint = STACK_CLI_HINTS[svc][lastAction]
+    if (!lastAction) return
+    const hint = STACK_CLI_HINTS.all[lastAction]
     const ok = await copyText(hint)
     if (ok) {
       setCopied(true)
@@ -144,10 +202,22 @@ export function StackModule({ embedded = false, forcedTab }: StackModuleProps = 
     }
   }
 
-  const cliHint =
-    lastAction && lastService && lastAction !== "status"
-      ? STACK_CLI_HINTS[lastService === "all" ? "all" : lastService][lastAction]
-      : null
+  const progressLabel = useMemo(() => {
+    if (!orchestrator || orchestrator.percent >= 100) {
+      return lastAction === "stop"
+        ? t("console.stack.progressDoneStop")
+        : t("console.stack.progressDoneStart")
+    }
+    if (!orchestrator.phase) {
+      return t("console.stack.progressFinishing")
+    }
+    const phaseLabel = t(PHASE_LABEL_KEYS[orchestrator.phase])
+    return orchestrator.action === "start"
+      ? t("console.stack.progressStarting", { phase: phaseLabel })
+      : t("console.stack.progressStopping", { phase: phaseLabel })
+  }, [orchestrator, lastAction, t])
+
+  const cliHint = lastAction ? STACK_CLI_HINTS.all[lastAction] : null
 
   const tabs = [
     { id: "service" as const, label: t("console.stack.tabs.service") },
@@ -156,15 +226,15 @@ export function StackModule({ embedded = false, forcedTab }: StackModuleProps = 
 
   const toolbar = activeTab === "service" ? (
     <div className="flex flex-wrap gap-2">
-      <Button disabled={busy} onClick={() => void run("start", "all")}>
-        {t("console.stack.startAll")}
+      <Button disabled={busy} onClick={() => void runOrchestrator("start")}>
+        {t("console.stack.startStack")}
       </Button>
       <Button
         variant="destructive"
         disabled={busy}
-        onClick={() => void run("stop", "all")}
+        onClick={() => void runOrchestrator("stop")}
       >
-        {t("console.stack.stopAll")}
+        {t("console.stack.stopStack")}
       </Button>
       <Button
         variant="outline"
@@ -219,75 +289,73 @@ export function StackModule({ embedded = false, forcedTab }: StackModuleProps = 
           <div className="flex flex-col gap-4">
             <StackGettingStarted />
 
+            {orchestrator && (
+              <StackProgressBar
+                percent={orchestrator.percent}
+                label={progressLabel}
+              />
+            )}
+
             <div className="grid gap-3 md:grid-cols-3">
-              {rows.map((row) => (
-                <div
-                  key={row.service}
-                  ref={(el) => {
-                    cardRefs.current[row.service] = el
-                  }}
-                  className={cn(
-                    CONSOLE_PANEL,
-                    focusedService === row.service &&
-                      "ring-2 ring-foreground/25",
-                  )}
-                >
-                  <div className="mb-2 flex items-center justify-between gap-2">
-                    <h2 className="font-medium">
-                      {row.label}
-                      {row.service === "memory" && (
-                        <span className="ml-2 text-xs font-normal text-muted-foreground">
-                          {t("console.stack.memoryOptional")}
-                        </span>
-                      )}
-                    </h2>
-                    <div className="flex flex-wrap items-center justify-end gap-1.5">
-                      {row.service === "driver" && health.driver === "up" && (
-                        <StatusBadge
-                          label="WeChat"
-                          health={
-                            !health.wechatLoggedIn
-                              ? "degraded"
-                              : health.chatsReady
-                                ? "up"
-                                : "degraded"
-                          }
-                        />
-                      )}
-                      <StatusBadge health={row.health} />
+              {rows.map((row) => {
+                const phaseActive =
+                  busy && orchestrator?.phase === row.service
+                return (
+                  <div
+                    key={row.service}
+                    ref={(el) => {
+                      cardRefs.current[row.service] = el
+                    }}
+                    className={cn(
+                      CONSOLE_PANEL,
+                      focusedService === row.service && "ring-2 ring-foreground/25",
+                      phaseActive && "ring-2 ring-primary/40",
+                    )}
+                  >
+                    <div className="mb-2 flex items-center justify-between gap-2">
+                      <h2 className="font-medium">
+                        {row.label}
+                        {row.service === "memory" && (
+                          <span className="ml-2 text-xs font-normal text-muted-foreground">
+                            {t("console.stack.memoryOptional")}
+                          </span>
+                        )}
+                      </h2>
+                      <div className="flex flex-wrap items-center justify-end gap-1.5">
+                        {row.service === "driver" && health.driver === "up" && (
+                          <StatusBadge
+                            label="WeChat"
+                            health={
+                              !health.wechatLoggedIn
+                                ? "degraded"
+                                : health.chatsReady
+                                  ? "up"
+                                  : "degraded"
+                            }
+                          />
+                        )}
+                        <StatusBadge health={row.health} />
+                      </div>
                     </div>
+                    {row.health === "down" && isMemorySetupError(row.status) && (
+                      <p className="mb-2 text-xs text-destructive">{row.status}</p>
+                    )}
+                    <details className="text-xs text-muted-foreground">
+                      <summary className="cursor-pointer select-none">
+                        {t("console.stack.details")}
+                      </summary>
+                      <pre className="mt-2 max-h-24 overflow-auto whitespace-pre-wrap">
+                        {row.status}
+                      </pre>
+                    </details>
                   </div>
-                  {row.health === "down" && isMemorySetupError(row.status) && (
-                    <p className="mb-2 text-xs text-destructive">{row.status}</p>
-                  )}
-                  <details className="mb-3 text-xs text-muted-foreground">
-                    <summary className="cursor-pointer select-none">
-                      {t("console.stack.details")}
-                    </summary>
-                    <pre className="mt-2 max-h-24 overflow-auto whitespace-pre-wrap">
-                      {row.status}
-                    </pre>
-                  </details>
-                  <div className="flex gap-2">
-                    <Button
-                      size="sm"
-                      disabled={busy}
-                      onClick={() => void run("start", row.service)}
-                    >
-                      {t("console.stack.start")}
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      disabled={busy}
-                      onClick={() => void run("stop", row.service)}
-                    >
-                      {t("console.stack.stop")}
-                    </Button>
-                  </div>
-                </div>
-              ))}
+                )
+              })}
             </div>
+
+            <p className="text-xs text-muted-foreground">
+              {t("console.stack.orderHint")}
+            </p>
 
             {log && (
               <div

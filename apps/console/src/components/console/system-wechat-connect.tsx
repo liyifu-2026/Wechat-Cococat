@@ -195,7 +195,7 @@ export function SystemWechatConnect() {
 
   const driverBlockedHint =
     health.driver === "degraded"
-      ? t("console.inbox.chatsDriverUnreachable")
+      ? t("wechat.inbox.chatsDriverUnreachable")
       : t("console.system.wechat.driverDown")
 
   return (
@@ -215,7 +215,7 @@ export function SystemWechatConnect() {
 
       {health.wechatLoggedIn && !chatsReady && (
         <div className="mb-4 rounded-md border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-950 dark:text-amber-100">
-          <p>{t("console.inbox.chatsDbNotReady")}</p>
+          <p>{t("wechat.inbox.chatsDbNotReady")}</p>
           <Button
             variant="outline"
             size="sm"
@@ -223,7 +223,7 @@ export function SystemWechatConnect() {
             disabled={refreshing}
             onClick={() => void refreshAll()}
           >
-            {t("console.inbox.syncWechatDb")}
+            {t("wechat.inbox.syncWechatDb")}
           </Button>
         </div>
       )}

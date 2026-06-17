@@ -1,37 +1,52 @@
 import { useCallback, useEffect, useState } from "react"
-import { Plus, RefreshCw, Save, Trash2 } from "lucide-react"
+import { RefreshCw, Save } from "lucide-react"
 import { useTranslation } from "react-i18next"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import {
-  listEscalationMutes,
   readConfigFile,
-  unmuteEscalationChat,
   writeConfigFile,
-  type EscalationMuteEntry,
 } from "@/lib/agent-config-client"
-import { fetchDriverChats, type DriverChat } from "@/lib/driver-client"
 import {
   DEFAULT_ESCALATION,
   parseEscalationConfig,
+  serializeEscalationConfig,
   type EscalationConfigFile,
   type EscalationWikiLink,
 } from "@/lib/escalation-config"
+import { inferLlmStack, persistLlmStack } from "@/lib/llm-stack-persist"
+import { useWikiStore } from "@/stores/wiki-store"
 import { CONSOLE_PANEL } from "@/lib/console-ui"
 
-function formatRemaining(ms: number): string {
-  if (ms <= 0) return "0m"
-  const h = Math.floor(ms / 3_600_000)
-  const m = Math.ceil((ms % 3_600_000) / 60_000)
-  return h > 0 ? `${h}h ${m}m` : `${m}m`
-}
+const RULES = [
+  {
+    id: "reply",
+    titleKey: "console.agent.escalation.ruleReplyTitle",
+    descKey: "console.agent.escalation.ruleReplyDesc",
+  },
+  {
+    id: "deflect",
+    titleKey: "console.agent.escalation.ruleDeflectTitle",
+    descKey: "console.agent.escalation.ruleDeflectDesc",
+  },
+  {
+    id: "escalate",
+    titleKey: "console.agent.escalation.ruleEscalateTitle",
+    descKey: "console.agent.escalation.ruleEscalateDesc",
+  },
+  {
+    id: "probe",
+    titleKey: "console.agent.escalation.ruleProbeTitle",
+    descKey: "console.agent.escalation.ruleProbeDesc",
+  },
+] as const
 
 export function AgentEscalationTab() {
   const { t } = useTranslation()
   const [config, setConfig] = useState<EscalationConfigFile>(DEFAULT_ESCALATION)
-  const [mutes, setMutes] = useState<EscalationMuteEntry[]>([])
-  const [contacts, setContacts] = useState<DriverChat[]>([])
+  const [unifiedGateLlm, setUnifiedGateLlm] = useState(true)
+  const [gateSaving, setGateSaving] = useState(false)
   const [message, setMessage] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
@@ -39,14 +54,18 @@ export function AgentEscalationTab() {
   const loadAll = useCallback(async () => {
     setError(null)
     try {
-      const [raw, muteList, chats] = await Promise.all([
+      const [raw, agentEnv] = await Promise.all([
         readConfigFile("escalation.json"),
-        listEscalationMutes(),
-        fetchDriverChats(80).catch(() => [] as DriverChat[]),
+        readConfigFile("agent.env").catch(() => ""),
       ])
       setConfig(parseEscalationConfig(raw))
-      setMutes(muteList)
-      setContacts(chats.filter((c) => !c.isGroup))
+      const store = useWikiStore.getState()
+      const stack = await inferLlmStack(
+        store.activePresetId,
+        store.providerConfigs,
+        agentEnv,
+      )
+      setUnifiedGateLlm(stack.unifiedGateLlm !== false)
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     }
@@ -56,45 +75,49 @@ export function AgentEscalationTab() {
     void loadAll()
   }, [loadAll])
 
+  async function saveUnifiedGate(enabled: boolean) {
+    setGateSaving(true)
+    setError(null)
+    try {
+      const store = useWikiStore.getState()
+      const agentEnv = await readConfigFile("agent.env").catch(() => "")
+      const stack = await inferLlmStack(
+        store.activePresetId,
+        store.providerConfigs,
+        agentEnv,
+      )
+      await persistLlmStack({
+        stack: { ...stack, unifiedGateLlm: enabled },
+        providerConfigs: store.providerConfigs,
+        llmConfig: store.llmConfig,
+      })
+      setUnifiedGateLlm(enabled)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setGateSaving(false)
+    }
+  }
+
   async function saveConfig() {
     setSaving(true)
     setMessage(null)
     try {
-      const payload = {
+      const payload = serializeEscalationConfig({
         ...config,
         wikiLinks: (config.wikiLinks ?? []).filter(
           (l) => l.path.trim() && l.note.trim(),
         ),
-      }
+      })
       const text = JSON.stringify(payload, null, 2) + "\n"
       await writeConfigFile("escalation.json", text)
+      setConfig(payload)
       setMessage(t("console.agent.escalation.saved"))
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
       setSaving(false)
     }
-  }
-
-  async function handleUnmute(chatId: string) {
-    setError(null)
-    try {
-      await unmuteEscalationChat(chatId)
-      setMutes((prev) => prev.filter((m) => m.chat_id !== chatId))
-      setMessage(t("console.agent.escalation.unmuted"))
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
-    }
-  }
-
-  function pickMaintainer(chat: DriverChat) {
-    setConfig((prev) => ({
-      ...prev,
-      maintainer: {
-        chatId: chat.id,
-        displayName: chat.remark || chat.name || chat.username || chat.id,
-      },
-    }))
   }
 
   function updateWikiLink(index: number, patch: Partial<EscalationWikiLink>) {
@@ -122,7 +145,7 @@ export function AgentEscalationTab() {
   }
 
   return (
-    <div className="min-h-0 flex-1 overflow-auto px-6 py-4">
+    <div className="px-6 py-4 pb-8">
       <div className="mb-4 flex items-center justify-between gap-3">
         <p className="text-sm text-muted-foreground">
           {t("console.agent.escalation.hint")}
@@ -144,49 +167,54 @@ export function AgentEscalationTab() {
 
       <div className="grid max-w-3xl gap-4">
         <div className={`${CONSOLE_PANEL} space-y-3`}>
-          <h2 className="font-medium">{t("console.agent.escalation.maintainer")}</h2>
-          <div className="grid gap-2 sm:grid-cols-2">
-            <div>
-              <Label>{t("console.agent.escalation.chatId")}</Label>
-              <Input
-                value={config.maintainer.chatId}
-                onChange={(e) =>
-                  setConfig((p) => ({
-                    ...p,
-                    maintainer: { ...p.maintainer, chatId: e.target.value },
-                  }))
-                }
-                placeholder="wxid_…"
-              />
-            </div>
-            <div>
-              <Label>{t("console.agent.escalation.displayName")}</Label>
-              <Input
-                value={config.maintainer.displayName}
-                onChange={(e) =>
-                  setConfig((p) => ({
-                    ...p,
-                    maintainer: { ...p.maintainer, displayName: e.target.value },
-                  }))
-                }
-              />
-            </div>
+          <div>
+            <h2 className="font-medium">
+              {t("console.agent.escalation.rulesTitle")}
+            </h2>
+            <p className="text-xs text-muted-foreground">
+              {t("console.agent.escalation.silentNote")}
+            </p>
           </div>
-          {contacts.length > 0 && (
-            <div className="max-h-40 space-y-1 overflow-auto text-sm">
-              {contacts.map((c) => (
-                <button
-                  key={c.id}
-                  type="button"
-                  className="block w-full rounded-md px-2 py-1 text-left hover:bg-accent"
-                  onClick={() => pickMaintainer(c)}
-                >
-                  {c.remark || c.name || c.username || c.id}
-                  <span className="ml-2 text-xs text-muted-foreground">{c.id}</span>
-                </button>
-              ))}
-            </div>
-          )}
+          <ul className="grid gap-2 sm:grid-cols-2">
+            {RULES.map(({ id, titleKey, descKey }) => (
+              <li
+                key={id}
+                className="rounded-md border border-border/60 bg-muted/20 p-3"
+              >
+                <h3 className="text-sm font-medium">{t(titleKey)}</h3>
+                <p className="mt-1 text-xs text-muted-foreground">{t(descKey)}</p>
+              </li>
+            ))}
+          </ul>
+        </div>
+
+        <div className={`${CONSOLE_PANEL} space-y-2`}>
+          <h2 className="font-medium">{t("console.agent.escalation.triageTitle")}</h2>
+          <p className="text-xs text-muted-foreground">
+            {t("console.agent.escalation.triageHint")}
+          </p>
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={unifiedGateLlm}
+              disabled={gateSaving}
+              onChange={(e) => void saveUnifiedGate(e.target.checked)}
+            />
+            {t("settings.sections.llmConfig.unifiedGate")}
+          </label>
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={config.triage.useLlm}
+              onChange={(e) =>
+                setConfig((p) => ({
+                  ...p,
+                  triage: { useLlm: e.target.checked },
+                }))
+              }
+            />
+            {t("console.agent.escalation.useLlm")}
+          </label>
         </div>
 
         <div className={`${CONSOLE_PANEL} space-y-2`}>
@@ -212,41 +240,6 @@ export function AgentEscalationTab() {
               {t(`console.agent.escalation.${labelKey}`)}
             </label>
           ))}
-          <label className="flex items-center gap-2 text-sm">
-            <input
-              type="checkbox"
-              checked={config.triage.useLlm}
-              onChange={(e) =>
-                setConfig((p) => ({
-                  ...p,
-                  triage: { useLlm: e.target.checked },
-                }))
-              }
-            />
-            {t("console.agent.escalation.useLlm")}
-          </label>
-        </div>
-
-        <div className={`${CONSOLE_PANEL} space-y-3`}>
-          <h2 className="font-medium">{t("console.agent.escalation.lines")}</h2>
-          <div>
-            <Label>{t("console.agent.escalation.deflectLine")}</Label>
-            <Input
-              value={config.deflectLine}
-              onChange={(e) =>
-                setConfig((p) => ({ ...p, deflectLine: e.target.value }))
-              }
-            />
-          </div>
-          <div>
-            <Label>{t("console.agent.escalation.customerLine")}</Label>
-            <Input
-              value={config.customerLine}
-              onChange={(e) =>
-                setConfig((p) => ({ ...p, customerLine: e.target.value }))
-              }
-            />
-          </div>
         </div>
 
         <div className={`${CONSOLE_PANEL} space-y-3`}>
@@ -260,7 +253,6 @@ export function AgentEscalationTab() {
               </p>
             </div>
             <Button type="button" size="sm" variant="outline" onClick={addWikiLink}>
-              <Plus className="mr-1 h-3.5 w-3.5" />
               {t("console.agent.escalation.wikiLinksAdd")}
             </Button>
           </div>
@@ -301,12 +293,11 @@ export function AgentEscalationTab() {
                   <div className="flex items-end">
                     <Button
                       type="button"
-                      size="icon"
+                      size="sm"
                       variant="ghost"
-                      aria-label={t("console.agent.escalation.wikiLinksRemove")}
                       onClick={() => removeWikiLink(index)}
                     >
-                      <Trash2 className="h-4 w-4" />
+                      {t("console.agent.escalation.wikiLinksRemove")}
                     </Button>
                   </div>
                 </li>
@@ -319,38 +310,6 @@ export function AgentEscalationTab() {
           <Save className="mr-2 h-4 w-4" />
           {t("console.agent.save")}
         </Button>
-
-        <div className={`${CONSOLE_PANEL} space-y-3`}>
-          <h2 className="font-medium">{t("console.agent.escalation.muteList")}</h2>
-          {mutes.length === 0 ? (
-            <p className="text-sm text-muted-foreground">
-              {t("console.agent.escalation.noMutes")}
-            </p>
-          ) : (
-            <ul className="space-y-2 text-sm">
-              {mutes.map((m) => (
-                <li
-                  key={m.chat_id}
-                  className="flex flex-wrap items-center justify-between gap-2 rounded-md border p-2"
-                >
-                  <div>
-                    <div className="font-medium">{m.chat_name || m.chat_id}</div>
-                    <div className="text-xs text-muted-foreground">
-                      {m.reason} · {formatRemaining(m.muted_until - Date.now())}
-                    </div>
-                  </div>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => void handleUnmute(m.chat_id)}
-                  >
-                    {t("console.agent.escalation.unmute")}
-                  </Button>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
       </div>
     </div>
   )

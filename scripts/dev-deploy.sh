@@ -64,9 +64,17 @@ if [ "$BUILD_MODE" = "debug" ]; then
   BINARY_DIR="debug"
 fi
 
+PROXY_URL="${PROXY:-${HTTP_PROXY:-${HTTPS_PROXY:-http://127.0.0.1:7892}}}"
+
 echo "==> Building in Docker ($PLATFORM, mode=$BUILD_MODE)"
+echo "    HTTP proxy: $PROXY_URL (network=host)"
 docker run --rm \
   --platform "$PLATFORM" \
+  --network=host \
+  -e "HTTP_PROXY=$PROXY_URL" \
+  -e "HTTPS_PROXY=$PROXY_URL" \
+  -e "http_proxy=$PROXY_URL" \
+  -e "https_proxy=$PROXY_URL" \
   -v "$RUST_DIR:/build:ro" \
   -v "$CACHE_VOLUME:/build/target" \
   -v "${CACHE_VOLUME}-registry:/usr/local/cargo/registry" \

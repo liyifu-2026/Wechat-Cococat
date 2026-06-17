@@ -39,8 +39,31 @@ export {
   ensureAuthToken,
 } from "./auth.js";
 
-export type { NewMessagesChatInfo, NewMessagesEvent } from "./types/WeChatEvents.js";
-export { isNewMessagesEvent } from "./types/WeChatEvents.js";
+export {
+  resolveModelCapabilities,
+  capabilityTags,
+  modelSupportsRole,
+  suggestMultimodalModel,
+  type ModelCapabilities,
+  type CapabilitySource,
+} from "./model-capabilities.js";
+
+export {
+  LLM_STACK_VERSION,
+  defaultLlmStack,
+  resolveRole,
+  resolveAllRoles,
+  isProviderConfigured,
+  listConfiguredProviders,
+  listVaultProviderIds,
+  parseLlmStack,
+  type LlmRoleId,
+  type RoleBinding,
+  type LlmStackFile,
+  type ProviderConfigEntry,
+  type ProviderConfigs,
+  type ResolvedRole,
+} from "./llm-stack.js";
 
 // Export schemas (but not the inferred types which duplicate types/)
 export {

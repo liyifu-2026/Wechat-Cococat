@@ -125,6 +125,9 @@ importers:
       tw-animate-css:
         specifier: ^1.4.0
         version: 1.4.0
+      wechat-emoji-renderer:
+        specifier: ^1.0.0
+        version: 1.0.0(react@19.2.7)(vue@3.5.35(typescript@5.9.3))
       zustand:
         specifier: ^5.0.12
         version: 5.0.14(@types/react@19.2.17)(react@19.2.7)(use-sync-external-store@1.6.0(react@19.2.7))
@@ -147,6 +150,9 @@ importers:
       fast-check:
         specifier: ^4.7.0
         version: 4.8.0
+      happy-dom:
+        specifier: ^20.10.3
+        version: 20.10.3
       typescript:
         specifier: ^5.7.3
         version: 5.9.3
@@ -155,7 +161,7 @@ importers:
         version: 8.0.16(@types/node@25.9.2)(esbuild@0.28.0)(jiti@2.7.0)(tsx@4.22.4)(yaml@2.9.0)
       vitest:
         specifier: ^4.1.4
-        version: 4.1.8(@types/node@25.9.2)(msw@2.14.6(@types/node@25.9.2)(typescript@5.9.3))(vite@8.0.16(@types/node@25.9.2)(esbuild@0.28.0)(jiti@2.7.0)(tsx@4.22.4)(yaml@2.9.0))
+        version: 4.1.8(@types/node@25.9.2)(happy-dom@20.10.3)(msw@2.14.6(@types/node@25.9.2)(typescript@5.9.3))(vite@8.0.16(@types/node@25.9.2)(esbuild@0.28.0)(jiti@2.7.0)(tsx@4.22.4)(yaml@2.9.0))
 
   docs/site:
     dependencies:
@@ -192,10 +198,16 @@ importers:
       ioredis:
         specifier: ^5.4.2
         version: 5.11.1
+      proper-lockfile:
+        specifier: ^4.1.2
+        version: 4.1.2
     devDependencies:
       '@types/node':
         specifier: ^22
         version: 22.19.20
+      '@types/proper-lockfile':
+        specifier: ^4.1.4
+        version: 4.1.4
       typescript:
         specifier: ^5.4.5
         version: 5.9.3
@@ -3081,6 +3093,9 @@ packages:
   '@types/node@25.9.2':
     resolution: {integrity: sha512-G05zqtJhcDLb8uslf5EjCxXg9G1KQxiV8OS0R26IC//Eoyitzqe8z37I7cqvnZlrlSfgocQRfSn/AHBZJJFyGw==}
 
+  '@types/proper-lockfile@4.1.4':
+    resolution: {integrity: sha512-uo2ABllncSqg9F1D4nugVl9v93RmjxF6LJzQLMLDdPaXCUIDPeOJ21Gbqi43xNKzBi/WQ0Q0dICqufzQbMjipQ==}
+
   '@types/qrcode-terminal@0.12.2':
     resolution: {integrity: sha512-v+RcIEJ+Uhd6ygSQ0u5YYY7ZM+la7GgPbs0V/7l/kFs2uO4S8BcIUEMoP7za4DNIqNnUD5npf0A/7kBhrCKG5Q==}
 
@@ -3115,6 +3130,9 @@ packages:
 
   '@types/validate-npm-package-name@4.0.2':
     resolution: {integrity: sha512-lrpDziQipxCEeK5kWxvljWYhUvOiB2A9izZd9B2AFarYAkqZshb4lPbRs7zKEic6eGtH8V/2qJW+dPp9OtF6bw==}
+
+  '@types/whatwg-mimetype@3.0.2':
+    resolution: {integrity: sha512-c2AKvDT8ToxLIOUlN51gTiHXflsfIFisS4pO7pDPoKouJCESkhZnEy623gwP9laCy5lnLDAw1vAzu2vM2YLOrA==}
 
   '@types/ws@8.18.1':
     resolution: {integrity: sha512-ThVF6DCVhA8kUGy+aazFQ4kXQ7E1Ty7A3ypFOe0IcJV8O/M511G99AW24irKrW56Wt44yG9+ij8FaqoBGkuBXg==}
@@ -3443,6 +3461,10 @@ packages:
 
   buffer-from@1.1.2:
     resolution: {integrity: sha512-E+XQCRwSbaaiChtv6k6Dwgc+bx+Bs6vuKJHHl5kox/BaKbhiXzqQOwK4cO22yElGp2OCmjwVhT3HmxgyPGnJfQ==}
+
+  buffer-image-size@0.6.4:
+    resolution: {integrity: sha512-nEh+kZOPY1w+gcCMobZ6ETUp9WfibndnosbpwB1iJk/8Gt5ZF2bhS6+B6bPYz424KtwsR6Rflc3tCz1/ghX2dQ==}
+    engines: {node: '>=4.0'}
 
   buffer@5.7.1:
     resolution: {integrity: sha512-EHcyIPBQ4BSGlvjB16k5KgAJ27CIsHY/2JBmCRReo48y9rQ3MaUzWX3KVlBa4U7MyX02HdVj0K7C3WaB3ju7FQ==}
@@ -4643,6 +4665,10 @@ packages:
 
   hachure-fill@0.5.2:
     resolution: {integrity: sha512-3GKBOn+m2LX9iq+JC1064cSFprJY4jL1jCXTcpnfER5HYE2l/4EfWSGzkPa/ZDBmYI0ZOEj5VHV/eKnPGkHuOg==}
+
+  happy-dom@20.10.3:
+    resolution: {integrity: sha512-Hjdiy8RziuCcn5z04QI/rlsNuQoG8P0xxjgvsSMpi89cvIXIOcucQtiHS1yHSShxoBcSCeYqAskINmTiy/mlfw==}
+    engines: {node: '>=20.0.0'}
 
   har-schema@2.0.0:
     resolution: {integrity: sha512-Oqluz6zhGX8cyRaTQlFMPw80bSJVG2x/cFb8ZPhUILGgHka9SsokCCOQgpveePerqidZOrT14ipqfJb7ILcW5Q==}
@@ -7411,6 +7437,17 @@ packages:
   webidl-conversions@3.0.1:
     resolution: {integrity: sha512-2JAn3z8AR6rjK8Sm8orRC0h/bcl/DqL7tRPdGZ4I1CjdF+EaMLmYxBHyXuKL849eucPFhvBoxMsflfOb8kxaeQ==}
 
+  wechat-emoji-renderer@1.0.0:
+    resolution: {integrity: sha512-tOUmkZf9ZXaGrroy/CxPkmEmP1jaRDAEex/VM5JThSOqVtEFIbFPBuNRzOR4bNIxI4vWsZXwilKMoli2EokY5g==}
+    peerDependencies:
+      react: '>=16.8.0'
+      vue: '>=3.0.0'
+    peerDependenciesMeta:
+      react:
+        optional: true
+      vue:
+        optional: true
+
   wechat4u@0.7.14:
     resolution: {integrity: sha512-BDEHSL1drGX8f9QdclOiTQcL6EtaIQWZ0MVsTeFkxGM1xVikqqlK7WcJp2IOpK0RczG4lFvXwDmOgzyZnA1waQ==}
 
@@ -7462,6 +7499,10 @@ packages:
     resolution: {integrity: sha512-bIZ8m2lOya4SKnxVunbMGemE8JyZdnXhnLnfXtBAZV997ef6uqP4pJxuwiJnV0qbXGyIE+F3B2b8yjQOZh43lQ==}
     engines: {node: '>=16', npm: '>=7'}
     hasBin: true
+
+  whatwg-mimetype@3.0.0:
+    resolution: {integrity: sha512-nt+N2dzIutVRxARx1nghPKGv1xHikU7HKdfafKkLNLindmPU/ch3U31NOCGGA/dmPcmb1VlofO0vnKAcsm0o/Q==}
+    engines: {node: '>=12'}
 
   whatwg-url@5.0.0:
     resolution: {integrity: sha512-saE57nupxk6v3HY35+jzBwYa0rKSy0XR8JSxZPwgLr7ys0IBzhGviA1/TUGJLmSVqs8pb9AnvICXEuOHLprYTw==}
@@ -10948,6 +10989,10 @@ snapshots:
     dependencies:
       undici-types: 7.24.6
 
+  '@types/proper-lockfile@4.1.4':
+    dependencies:
+      '@types/retry': 0.12.0
+
   '@types/qrcode-terminal@0.12.2': {}
 
   '@types/react-dom@19.2.3(@types/react@19.2.17)':
@@ -10978,6 +11023,8 @@ snapshots:
   '@types/unist@3.0.3': {}
 
   '@types/validate-npm-package-name@4.0.2': {}
+
+  '@types/whatwg-mimetype@3.0.2': {}
 
   '@types/ws@8.18.1':
     dependencies:
@@ -11430,6 +11477,10 @@ snapshots:
   buffer-equal@0.0.1: {}
 
   buffer-from@1.1.2: {}
+
+  buffer-image-size@0.6.4:
+    dependencies:
+      '@types/node': 25.9.2
 
   buffer@5.7.1:
     dependencies:
@@ -12769,6 +12820,19 @@ snapshots:
       uncrypto: 0.1.3
 
   hachure-fill@0.5.2: {}
+
+  happy-dom@20.10.3:
+    dependencies:
+      '@types/node': 25.9.2
+      '@types/whatwg-mimetype': 3.0.2
+      '@types/ws': 8.18.1
+      buffer-image-size: 0.6.4
+      entities: 7.0.1
+      whatwg-mimetype: 3.0.0
+      ws: 8.21.0
+    transitivePeerDependencies:
+      - bufferutil
+      - utf-8-validate
 
   har-schema@2.0.0: {}
 
@@ -16064,7 +16128,7 @@ snapshots:
     optionalDependencies:
       vite: 6.4.3(@types/node@25.9.2)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.22.4)(yaml@2.9.0)
 
-  vitest@4.1.8(@types/node@25.9.2)(msw@2.14.6(@types/node@25.9.2)(typescript@5.9.3))(vite@8.0.16(@types/node@25.9.2)(esbuild@0.28.0)(jiti@2.7.0)(tsx@4.22.4)(yaml@2.9.0)):
+  vitest@4.1.8(@types/node@25.9.2)(happy-dom@20.10.3)(msw@2.14.6(@types/node@25.9.2)(typescript@5.9.3))(vite@8.0.16(@types/node@25.9.2)(esbuild@0.28.0)(jiti@2.7.0)(tsx@4.22.4)(yaml@2.9.0)):
     dependencies:
       '@vitest/expect': 4.1.8
       '@vitest/mocker': 4.1.8(msw@2.14.6(@types/node@25.9.2)(typescript@5.9.3))(vite@8.0.16(@types/node@25.9.2)(esbuild@0.28.0)(jiti@2.7.0)(tsx@4.22.4)(yaml@2.9.0))
@@ -16088,6 +16152,7 @@ snapshots:
       why-is-node-running: 2.3.0
     optionalDependencies:
       '@types/node': 25.9.2
+      happy-dom: 20.10.3
     transitivePeerDependencies:
       - msw
 
@@ -16126,6 +16191,11 @@ snapshots:
   web-tree-sitter@0.26.9: {}
 
   webidl-conversions@3.0.1: {}
+
+  wechat-emoji-renderer@1.0.0(react@19.2.7)(vue@3.5.35(typescript@5.9.3)):
+    optionalDependencies:
+      react: 19.2.7
+      vue: 3.5.35(typescript@5.9.3)
 
   wechat4u@0.7.14:
     dependencies:
@@ -16284,6 +16354,8 @@ snapshots:
       - rxjs
       - supports-color
       - utf-8-validate
+
+  whatwg-mimetype@3.0.0: {}
 
   whatwg-url@5.0.0:
     dependencies:

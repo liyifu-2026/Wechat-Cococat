@@ -2,7 +2,8 @@ use super::wechat_db::{get_db_path, query_wechat_db};
 use super::wechat_artifacts::{existing_artifact_ref, media_kind_for_msg_type};
 use crate::ia::types::{Message, ReplyInfo};
 use md5::{Digest, Md5};
-use std::collections::HashMap;
+use serde_json::Value;
+use std::collections::{HashMap, HashSet};
 
 /// ZSTD magic number (little-endian): 0xFD2FB528
 const ZSTD_MAGIC: &str = "28b52ffd";
@@ -61,13 +62,36 @@ fn extract_group_sender(content: &str) -> (Option<String>, String) {
     (None, content.to_string())
 }
 
+/// Normalize sysmsg / revoke display text (strip XML quotes).
+fn normalize_sysmsg_text(text: &str) -> String {
+    text.trim().replace('"', "")
+}
+
+/// Extract human-readable text from sysmsg / revokemsg XML.
+fn extract_sysmsg_display(content: &str) -> String {
+    if let Some(inner) = extract_xml_tag(content, "content") {
+        return normalize_sysmsg_text(&inner);
+    }
+    normalize_sysmsg_text(content)
+}
+
 /// Clean message content for display based on message type.
 /// Replaces verbose XML with concise summaries.
 fn clean_content(content: &str, msg_type: i32) -> String {
     let base = msg_type & 0x7FFFFFFF;
     match base {
+        // Revoke notice (type 10002)
+        10002 if content.contains("revokemsg") || content.contains("<sysmsg") => {
+            extract_sysmsg_display(content)
+        }
+        // Generic system notice (type 10000)
+        10000 if content.contains("<sysmsg") => extract_sysmsg_display(content),
         // Image (type 3): replace XML with empty string
         3 if content.contains("<img") => String::new(),
+        // Voice (type 34): strip XML payload — ops never need raw voicemsg attrs
+        34 if content.contains("<voicemsg") || content.contains("<msg>") => String::new(),
+        // Video (type 43): strip XML payload
+        43 if content.contains("<videomsg") || content.contains("<msg>") => String::new(),
         // Emoji (type 47): show cdnurl or [emoji]
         47 if content.contains("<emoji") => {
             extract_xml_attr(content, "cdnurl")
@@ -233,67 +257,54 @@ pub fn find_message_db<'a>(
     None
 }
 
-/// List messages for a specific chat.
-///
-/// Messages may be spread across message_0.db, message_1.db, etc.
-/// Each chat's messages are in a `Msg_{MD5(username)}` table.
-pub fn list_messages(
+fn message_select_sql(table_name: &str) -> String {
+    format!(
+        "SELECT m.local_id, m.server_id, m.local_type, m.create_time,
+                hex(m.message_content) as hex_content,
+                m.WCDB_CT_message_content as is_compressed,
+                hex(m.source) as hex_source,
+                m.WCDB_CT_source as source_compressed,
+                n.user_name as sender_name
+         FROM \"{table_name}\" m
+         LEFT JOIN Name2Id n ON m.real_sender_id = n.rowid"
+    )
+}
+
+fn rows_into_messages(
     account_dir: &str,
     keys: &HashMap<String, String>,
     chat_id: &str,
-    limit: i64,
-    offset: i64,
+    is_group: bool,
+    rows: Vec<Value>,
 ) -> Vec<Message> {
-    let table_name = get_msg_table_name(chat_id);
-    let is_group = chat_id.contains("@chatroom");
-
-    let (db_name, key) = match find_message_db(account_dir, keys, chat_id) {
-        Some(dk) => dk,
-        None => return Vec::new(),
-    };
-    let db_path = get_db_path(account_dir, &db_name);
-
-    // Query messages using hex() for safe binary/compressed content extraction
-    let rows = query_wechat_db(
-        &db_path,
-        key,
-        &format!(
-            "SELECT m.local_id, m.server_id, m.local_type, m.create_time,
-                    hex(m.message_content) as hex_content,
-                    m.WCDB_CT_message_content as is_compressed,
-                    hex(m.source) as hex_source,
-                    m.WCDB_CT_source as source_compressed,
-                    n.user_name as sender_name
-             FROM \"{table_name}\" m
-             LEFT JOIN Name2Id n ON m.real_sender_id = n.rowid
-             ORDER BY m.create_time DESC
-             LIMIT {limit} OFFSET {offset};"
-        ),
-    );
-
-    // Resolve sender display names from contact.db
     let contact_names: HashMap<String, String> = {
         let mut map = HashMap::new();
         if let Some(contact_key) = keys.get("contact.db") {
-            // Collect unique sender wxids
-            let senders: Vec<String> = rows.iter()
+            let senders: Vec<String> = rows
+                .iter()
                 .filter_map(|row| {
                     row.get("sender_name")
                         .and_then(|v| v.as_str())
                         .filter(|s| !s.is_empty())
                         .map(|s| s.to_string())
                 })
-                .collect::<std::collections::HashSet<_>>()
+                .collect::<HashSet<_>>()
                 .into_iter()
                 .collect();
 
             if !senders.is_empty() {
                 let contact_db = get_db_path(account_dir, "contact.db");
-                let placeholders = senders.iter().map(|s| format!("'{}'", s.replace('\'', "''"))).collect::<Vec<_>>().join(",");
+                let placeholders = senders
+                    .iter()
+                    .map(|s| format!("'{}'", s.replace('\'', "''")))
+                    .collect::<Vec<_>>()
+                    .join(",");
                 let contacts = query_wechat_db(
                     &contact_db,
                     contact_key,
-                    &format!("SELECT username, nick_name, remark, alias FROM contact WHERE username IN ({placeholders});"),
+                    &format!(
+                        "SELECT username, nick_name, remark, alias FROM contact WHERE username IN ({placeholders});"
+                    ),
                 );
                 for c in contacts {
                     if let Some(username) = c.get("username").and_then(|v| v.as_str()) {
@@ -310,7 +321,6 @@ pub fn list_messages(
                             .and_then(|v| v.as_str())
                             .filter(|s| !s.is_empty());
                         let name = if is_group {
-                            // Group @ picker uses the in-chat display name (alias) first.
                             alias.or(nick).or(remark).unwrap_or(username)
                         } else {
                             remark.or(nick).unwrap_or(username)
@@ -347,24 +357,19 @@ pub fn list_messages(
 
             let raw_content = decode_message_content(hex_content, is_compressed);
 
-            // Get sender from Name2Id join (works for both group and 1:1 chats)
             let sender = row
                 .get("sender_name")
                 .and_then(|v| v.as_str())
                 .filter(|s| !s.is_empty())
                 .map(|s| s.to_string());
 
-            // Strip group sender prefix from content ("wxid:\ncontent" format)
             let body = if is_group {
                 extract_group_sender(&raw_content).1
             } else {
                 raw_content
             };
 
-            // Extract reply info before cleaning (needs raw XML)
             let reply = extract_reply_info(&body, msg_type);
-
-            // Clean content for display (replace XML with summaries)
             let content = clean_content(&body, msg_type);
 
             let timestamp = row
@@ -377,7 +382,6 @@ pub fn list_messages(
                 })
                 .unwrap_or_default();
 
-            // Check @-mention from source XML (only for group chats)
             let is_mentioned = if is_group {
                 let hex_source = row
                     .get("hex_source")
@@ -395,8 +399,6 @@ pub fn list_messages(
                     false
                 };
 
-                // For type-49 (appmsg) messages, especially reference/quote messages,
-                // WeChat may place <atuserlist> inside the content XML instead of source.
                 let from_content = if !from_source && (msg_type & 0x7FFFFFFF) == 49 {
                     check_is_mentioned(&body, account_dir)
                 } else {
@@ -412,7 +414,6 @@ pub fn list_messages(
                 None
             };
 
-            // Check if message was sent by the logged-in user
             let is_self = sender.as_ref().map(|s| account_dir.starts_with(s.as_str()));
 
             let sender_name = sender.as_ref().and_then(|wxid| {
@@ -447,7 +448,175 @@ pub fn list_messages(
                 reply,
                 media_kind: media_kind_for_msg_type(msg_type).map(str::to_string),
                 artifact_ref: existing_artifact_ref(chat_id, local_id, msg_type),
+                client_msg_id: None,
             })
         })
         .collect()
+}
+
+fn query_messages_sql(
+    account_dir: &str,
+    keys: &HashMap<String, String>,
+    chat_id: &str,
+    sql: &str,
+) -> Vec<Message> {
+    let is_group = chat_id.contains("@chatroom");
+    let (db_name, key) = match find_message_db(account_dir, keys, chat_id) {
+        Some(dk) => dk,
+        None => return Vec::new(),
+    };
+    let db_path = get_db_path(account_dir, &db_name);
+    let rows = query_wechat_db(&db_path, key, sql);
+    rows_into_messages(account_dir, keys, chat_id, is_group, rows)
+}
+
+fn message_create_time(
+    account_dir: &str,
+    keys: &HashMap<String, String>,
+    chat_id: &str,
+    local_id: i64,
+) -> Option<i64> {
+    let table_name = get_msg_table_name(chat_id);
+    let (db_name, key) = find_message_db(account_dir, keys, chat_id)?;
+    let db_path = get_db_path(account_dir, &db_name);
+    let rows = query_wechat_db(
+        &db_path,
+        key,
+        &format!(
+            "SELECT create_time FROM \"{table_name}\" WHERE local_id = {local_id} LIMIT 1;"
+        ),
+    );
+    rows.first()?.get("create_time")?.as_i64()
+}
+
+fn dedupe_messages_desc(messages: Vec<Message>) -> Vec<Message> {
+    let mut seen = HashSet::new();
+    let mut out = Vec::with_capacity(messages.len());
+    for msg in messages {
+        if seen.insert(msg.local_id) {
+            out.push(msg);
+        }
+    }
+    out
+}
+
+/// List messages for a specific chat.
+///
+/// Messages may be spread across message_0.db, message_1.db, etc.
+/// Each chat's messages are in a `Msg_{MD5(username)}` table.
+pub fn list_messages(
+    account_dir: &str,
+    keys: &HashMap<String, String>,
+    chat_id: &str,
+    limit: i64,
+    offset: i64,
+) -> Vec<Message> {
+    let table_name = get_msg_table_name(chat_id);
+    let sql = format!(
+        "{} ORDER BY m.create_time DESC LIMIT {limit} OFFSET {offset};",
+        message_select_sql(&table_name)
+    );
+    query_messages_sql(account_dir, keys, chat_id, &sql)
+}
+
+/// Messages strictly older than `before_time` (unix seconds), newest-first.
+pub fn list_messages_before_time(
+    account_dir: &str,
+    keys: &HashMap<String, String>,
+    chat_id: &str,
+    before_time: i64,
+    limit: i64,
+) -> Vec<Message> {
+    let table_name = get_msg_table_name(chat_id);
+    let sql = format!(
+        "{} WHERE m.create_time < {before_time} ORDER BY m.create_time DESC LIMIT {limit};",
+        message_select_sql(&table_name)
+    );
+    query_messages_sql(account_dir, keys, chat_id, &sql)
+}
+
+/// Messages strictly newer than `after_time` (unix seconds), returned newest-first.
+pub fn list_messages_after_time(
+    account_dir: &str,
+    keys: &HashMap<String, String>,
+    chat_id: &str,
+    after_time: i64,
+    limit: i64,
+) -> Vec<Message> {
+    let table_name = get_msg_table_name(chat_id);
+    let sql = format!(
+        "{} WHERE m.create_time > {after_time} ORDER BY m.create_time ASC LIMIT {limit};",
+        message_select_sql(&table_name)
+    );
+    let mut messages = query_messages_sql(account_dir, keys, chat_id, &sql);
+    messages.reverse();
+    messages
+}
+
+/// Window of messages centered on `local_id` (≈ half limit on each side).
+pub fn list_messages_around(
+    account_dir: &str,
+    keys: &HashMap<String, String>,
+    chat_id: &str,
+    local_id: i64,
+    limit: i64,
+) -> Vec<Message> {
+    let Some(target_time) = message_create_time(account_dir, keys, chat_id, local_id) else {
+        return Vec::new();
+    };
+    let table_name = get_msg_table_name(chat_id);
+    let half = limit.max(2) / 2;
+    let newer_limit = half + 1;
+    let older_limit = half;
+
+    let newer_sql = format!(
+        "{} WHERE m.create_time >= {target_time} ORDER BY m.create_time ASC LIMIT {newer_limit};",
+        message_select_sql(&table_name)
+    );
+    let older_sql = format!(
+        "{} WHERE m.create_time < {target_time} ORDER BY m.create_time DESC LIMIT {older_limit};",
+        message_select_sql(&table_name)
+    );
+
+    let mut newer = query_messages_sql(account_dir, keys, chat_id, &newer_sql);
+    newer.reverse();
+    let older = query_messages_sql(account_dir, keys, chat_id, &older_sql);
+
+    let mut merged = newer;
+    merged.extend(older);
+    dedupe_messages_desc(merged)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::clean_content;
+
+    #[test]
+    fn clean_content_strips_voice_xml() {
+        let xml = r#"<msg><voicemsg endflag="1" voicelength="2699" voiceurl="abc" /></msg>"#;
+        assert_eq!(clean_content(xml, 34), "");
+    }
+
+    #[test]
+    fn clean_content_strips_video_xml() {
+        let xml = r#"<msg><videomsg length="123" /></msg>"#;
+        assert_eq!(clean_content(xml, 43), "");
+    }
+
+    #[test]
+    fn clean_content_strips_image_xml() {
+        let xml = r#"<msg><img hdlength="1" /></msg>"#;
+        assert_eq!(clean_content(xml, 3), "");
+    }
+
+    #[test]
+    fn clean_content_keeps_plain_text() {
+        assert_eq!(clean_content("你好", 1), "你好");
+    }
+
+    #[test]
+    fn clean_content_revoke_sysmsg() {
+        let xml = r#"<sysmsg type="revokemsg"><revokemsg><content>"Leaif" 撤回了一条消息</content></revokemsg></sysmsg>"#;
+        assert_eq!(clean_content(xml, 10002), "Leaif 撤回了一条消息");
+    }
 }

@@ -2,6 +2,7 @@
 use crate::ia::actions;
 use crate::ia::selectors::query_selector;
 use crate::ia::types::*;
+use crate::ia::wechat_compose::find_edit_and_send_button;
 use crate::tools::chat_select::{open_chat, OpenChatResult};
 use crate::tools::exec::{exec_command, ExecOptions};
 
@@ -30,49 +31,13 @@ pub struct SendMessagePlanState {
     pub phase: SendMessagePhase,
     pub open_result: Option<OpenChatResult>,
     pub confirm_attempts: u32,
+    pub focus_attempts: u32,
     pub mention_index: usize,
     pub mention_attempts: u32,
 }
 
 const MENTION_MAX_ATTEMPTS: u32 = 3;
-
-fn find_edit_and_send_button(a11y: &A11yNode) -> Option<(&A11yNode, &A11yNode)> {
-    let send_btn = query_selector(a11y, r#"push-button[name="Send(S)"]"#)?;
-    find_edit_near_send(a11y, send_btn)
-}
-
-fn find_edit_near_send<'a>(
-    root: &'a A11yNode,
-    _send_btn: &A11yNode,
-) -> Option<(&'a A11yNode, &'a A11yNode)> {
-    find_edit_send_pair(root)
-}
-
-fn find_edit_send_pair(node: &A11yNode) -> Option<(&A11yNode, &A11yNode)> {
-    if let Some(children) = &node.children {
-        let send_btn = children.iter().find(|c| {
-            c.role == "push-button" && c.name == "Send(S)"
-        });
-        let edit_node = children.iter().find(|c| {
-            c.role == "text"
-                && c.states
-                    .as_ref()
-                    .map(|s| s.iter().any(|st| st == "EDITABLE"))
-                    .unwrap_or(false)
-        });
-
-        if let (Some(edit), Some(send)) = (edit_node, send_btn) {
-            return Some((edit, send));
-        }
-
-        for child in children {
-            if let Some(result) = find_edit_send_pair(child) {
-                return Some(result);
-            }
-        }
-    }
-    None
-}
+const FOCUS_MAX_ATTEMPTS: u32 = 15;
 
 #[async_trait::async_trait]
 impl Plan for SendMessagePlan {
@@ -86,6 +51,7 @@ impl Plan for SendMessagePlan {
             phase: SendMessagePhase::Opening,
             open_result: None,
             confirm_attempts: 0,
+            focus_attempts: 0,
             mention_index: 0,
             mention_attempts: 0,
         }
@@ -134,6 +100,10 @@ impl Plan for SendMessagePlan {
             match &plan_state.phase {
                 SendMessagePhase::Opening => {
                     if main_state_id != Some("chat") && main_state_id != Some("chat_open") {
+                        tracing::warn!(
+                            "[send_message] main window not on chat view: {:?}",
+                            main_state_id
+                        );
                         return None;
                     }
 
@@ -145,10 +115,15 @@ impl Plan for SendMessagePlan {
                         ))
                     });
 
-                    let force = main_state_id == Some("chat");
-                    let result = open_chat(&params.chat_id, force, click_xy).await;
+                    // Always force-open target chat (Console may send to a different session than UI focus).
+                    let result = open_chat(&params.chat_id, true, click_xy).await;
 
                     if !result.ok {
+                        tracing::warn!(
+                            "[send_message] open_chat failed for {}: {:?}",
+                            params.chat_id,
+                            result.error
+                        );
                         return None;
                     }
 
@@ -167,14 +142,53 @@ impl Plan for SendMessagePlan {
 
                 SendMessagePhase::Focusing => {
                     if main_state_id != Some("chat_open") {
+                        plan_state.focus_attempts += 1;
+                        if plan_state.focus_attempts < FOCUS_MAX_ATTEMPTS {
+                            tracing::debug!(
+                                "[send_message] waiting for chat_open, got {:?} ({}/{})",
+                                main_state_id,
+                                plan_state.focus_attempts,
+                                FOCUS_MAX_ATTEMPTS
+                            );
+                            return Some(SelectedAction {
+                                action: actions::wait_short(),
+                                frame: identified.main_window.as_ref().and_then(|m| m.frame.clone()),
+                            });
+                        }
+                        tracing::warn!(
+                            "[send_message] expected chat_open, got {:?}",
+                            main_state_id
+                        );
                         return None;
                     }
 
                     let found = find_edit_and_send_button(a11y);
                     let (edit_node, _) = match found {
                         Some(f) => f,
-                        None => return None,
+                        None => {
+                            plan_state.focus_attempts += 1;
+                            if plan_state.focus_attempts < FOCUS_MAX_ATTEMPTS {
+                                tracing::debug!(
+                                    "[send_message] compose not ready yet ({}/{})",
+                                    plan_state.focus_attempts,
+                                    FOCUS_MAX_ATTEMPTS
+                                );
+                                return Some(SelectedAction {
+                                    action: actions::wait_short(),
+                                    frame: identified
+                                        .main_window
+                                        .as_ref()
+                                        .and_then(|m| m.frame.clone()),
+                                });
+                            }
+                            tracing::warn!(
+                                "[send_message] compose input / Send button not found in a11y tree"
+                            );
+                            return None;
+                        }
                     };
+
+                    plan_state.focus_attempts = 0;
 
                     // If we have mentions, go to Mentioning phase
                     if !params.mentions.is_empty() {

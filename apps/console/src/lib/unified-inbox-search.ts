@@ -5,6 +5,7 @@ import {
   type DriverMessage,
 } from "@/lib/driver-client"
 import { chatDisplayName } from "@/lib/wechat-ui"
+import { messageDisplayBody } from "@/lib/wechat-message-body"
 
 export type CrossChatMessageHit = {
   chat: DriverChat
@@ -69,43 +70,71 @@ function messageSnippet(content: string, query: string, max = 72): string {
   return start > 0 ? `…${slice}` : slice
 }
 
-/** Search message bodies across top matching chats (client-side, no Driver FTS). */
+export type MessageSearchProgress = {
+  scannedChats: number
+  totalChats: number
+}
+
+/** Search message bodies across all cached chats (paginated client scan). */
 export async function searchMessagesAcrossChats(
   query: string,
   cachedChats: DriverChat[],
-  opts?: { chatLimit?: number; perChatMessages?: number; hitLimit?: number },
+  opts?: {
+    chatLimit?: number
+    batchSize?: number
+    maxPagesPerChat?: number
+    hitLimit?: number
+    onProgress?: (progress: MessageSearchProgress) => void
+  },
 ): Promise<CrossChatMessageHit[]> {
   const q = query.trim()
-  if (q.length < 2) return []
+  if (q.length < 1) return []
 
-  const chatLimit = opts?.chatLimit ?? 6
-  const perChatMessages = opts?.perChatMessages ?? 50
-  const hitLimit = opts?.hitLimit ?? 8
-
-  const chats = await resolveChatSearch(q, cachedChats, chatLimit)
-  const hits: CrossChatMessageHit[] = []
+  const batchSize = opts?.batchSize ?? 100
+  const maxPagesPerChat = opts?.maxPagesPerChat ?? 20
+  const hitLimit = opts?.hitLimit ?? 24
   const qLower = q.toLowerCase()
 
-  await Promise.all(
-    chats.map(async (chat) => {
-      if (hits.length >= hitLimit) return
-      try {
-        const messages = await fetchDriverMessages(chat.id, perChatMessages)
+  const nameMatches = await resolveChatSearch(q, cachedChats, cachedChats.length)
+  const nameMatchIds = new Set(nameMatches.map((c) => c.id))
+  const chats = [
+    ...nameMatches,
+    ...cachedChats.filter((c) => !nameMatchIds.has(c.id)),
+  ].slice(0, opts?.chatLimit ?? cachedChats.length)
+
+  const hits: CrossChatMessageHit[] = []
+  let scannedChats = 0
+
+  for (const chat of chats) {
+    if (hits.length >= hitLimit) break
+    scannedChats += 1
+    opts?.onProgress?.({ scannedChats, totalChats: chats.length })
+
+    let offset = 0
+    try {
+      for (let page = 0; page < maxPagesPerChat; page++) {
+        if (hits.length >= hitLimit) break
+        const messages = await fetchDriverMessages(chat.id, batchSize, offset)
+        if (messages.length === 0) break
+        offset += messages.length
+
         for (const message of messages) {
-          const body = message.content?.trim() ?? ""
+          const body = messageDisplayBody(message, () => "")
           if (!body || !body.toLowerCase().includes(qLower)) continue
           hits.push({
             chat,
             message,
             snippet: messageSnippet(body, q),
           })
-          break
+          if (hits.length >= hitLimit) break
         }
-      } catch {
-        // ignore per-chat failures
+
+        if (messages.length < batchSize) break
       }
-    }),
-  )
+    } catch {
+      // ignore per-chat failures
+    }
+  }
 
   return hits.slice(0, hitLimit)
 }

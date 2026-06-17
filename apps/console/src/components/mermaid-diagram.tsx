@@ -5,18 +5,38 @@ interface MermaidDiagramProps {
   code: string
 }
 
+const MAX_SVG_CACHE_SIZE = 50
 const svgCache = new Map<string, string>()
+
+function getSvgCache(key: string): string | undefined {
+  const hit = svgCache.get(key)
+  if (hit === undefined) return undefined
+  // LRU touch: move to end on read
+  svgCache.delete(key)
+  svgCache.set(key, hit)
+  return hit
+}
+
+function setSvgCache(key: string, value: string): void {
+  if (svgCache.has(key)) {
+    svgCache.delete(key)
+  } else if (svgCache.size >= MAX_SVG_CACHE_SIZE) {
+    const firstKey = svgCache.keys().next().value
+    if (firstKey !== undefined) svgCache.delete(firstKey)
+  }
+  svgCache.set(key, value)
+}
 
 export function MermaidDiagram({ code }: MermaidDiagramProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const [error, setError] = useState<string | null>(null)
-  const [svg, setSvg] = useState<string | null>(() => svgCache.get(code) ?? null)
-  const [visible, setVisible] = useState(() => svgCache.has(code))
+  const [svg, setSvg] = useState<string | null>(() => getSvgCache(code) ?? null)
+  const [visible, setVisible] = useState(() => getSvgCache(code) !== undefined)
   const [expanded, setExpanded] = useState(false)
   const [scale, setScale] = useState(1)
 
   useEffect(() => {
-    const cached = svgCache.get(code) ?? null
+    const cached = getSvgCache(code) ?? null
     setError(null)
     setSvg(cached)
     setVisible(Boolean(cached))
@@ -24,7 +44,7 @@ export function MermaidDiagram({ code }: MermaidDiagramProps) {
 
   // Only render when the diagram scrolls into view
   useEffect(() => {
-    if (svgCache.has(code)) return
+    if (getSvgCache(code) !== undefined) return
     const el = containerRef.current
     if (!el) return
 
@@ -44,7 +64,7 @@ export function MermaidDiagram({ code }: MermaidDiagramProps) {
   // Render mermaid SVG once visible
   useEffect(() => {
     if (!visible || svg) return
-    const cached = svgCache.get(code)
+    const cached = getSvgCache(code)
     if (cached) {
       setSvg(cached)
       return
@@ -63,7 +83,7 @@ export function MermaidDiagram({ code }: MermaidDiagramProps) {
         const id = `mermaid-${Math.random().toString(36).slice(2, 10)}`
         const { svg: rendered } = await mermaid.render(id, code)
         if (!cancelled) {
-          svgCache.set(code, rendered)
+          setSvgCache(code, rendered)
           setSvg(rendered)
           setError(null)
         }

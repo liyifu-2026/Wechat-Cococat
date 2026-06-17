@@ -16,7 +16,8 @@ fi
 DATA_DIR="${TDAI_DATA_DIR:-${COCOCAT_DATA_DIR:-$HOME/.local/share/cococat}/memory}"
 PID_FILE="$DATA_DIR/gateway.pid"
 LOG_FILE="$DATA_DIR/gateway.log"
-GATEWAY_ROOT="${TDAI_GATEWAY_ROOT:-/tmp/TencentDB-Agent-Memory}"
+COCOCAT_DATA="${COCOCAT_DATA_DIR:-$HOME/.local/share/cococat}"
+GATEWAY_ROOT="${TDAI_GATEWAY_ROOT:-$COCOCAT_DATA/TencentDB-Agent-Memory}"
 GATEWAY_SRC="$GATEWAY_ROOT/src/gateway/server.ts"
 
 PROXY_URL="${PROXY:-${HTTP_PROXY:-http://127.0.0.1:7892}}"
@@ -45,7 +46,9 @@ fi
 
 if [[ ! -f "$GATEWAY_SRC" ]]; then
   echo "Missing gateway source: $GATEWAY_SRC"
-  echo "Clone with proxy: PROXY=$PROXY_URL git clone --depth 1 https://github.com/TencentCloud/TencentDB-Agent-Memory.git /tmp/TencentDB-Agent-Memory"
+  echo "One-time clone (survives reboot):"
+  echo "  git clone --depth 1 https://github.com/TencentCloud/TencentDB-Agent-Memory.git $GATEWAY_ROOT"
+  echo "Or with proxy: PROXY=$PROXY_URL git clone --depth 1 https://github.com/TencentCloud/TencentDB-Agent-Memory.git $GATEWAY_ROOT"
   exit 1
 fi
 

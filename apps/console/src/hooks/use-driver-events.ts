@@ -37,6 +37,13 @@ function useLegacyDriverWebSocket(
   onChatsChanged: (chatIds: string[]) => void,
   onSelectedChatActivity?: (chatId: string) => void,
 ) {
+  const onChatsRef = useRef(onChatsChanged)
+  const onSelectedRef = useRef(onSelectedChatActivity)
+  const selectedChatIdRef = useRef(selectedChatId)
+  onChatsRef.current = onChatsChanged
+  onSelectedRef.current = onSelectedChatActivity
+  selectedChatIdRef.current = selectedChatId
+
   useEffect(() => {
     if (!enabled) return
 
@@ -57,9 +64,9 @@ function useLegacyDriverWebSocket(
         try {
           handleNewMessagesPayload(
             JSON.parse(String(ev.data)) as unknown,
-            onChatsChanged,
-            onSelectedChatActivity,
-            selectedChatId,
+            (ids) => onChatsRef.current(ids),
+            (chatId) => onSelectedRef.current?.(chatId),
+            selectedChatIdRef.current,
           )
         } catch {
           // ignore malformed payloads
@@ -83,7 +90,7 @@ function useLegacyDriverWebSocket(
       cancelled = true
       ws?.close()
     }
-  }, [enabled, onChatsChanged, onSelectedChatActivity, selectedChatId])
+  }, [enabled])
 }
 
 export function useDriverEvents({

@@ -1,25 +1,60 @@
 import type { Message, WeChatClient } from "@cococat/shared";
 import { appendConsoleEvent } from "../console-events.js";
-import { loadEscalationConfig } from "./config.js";
+import {
+  loadEscalationConfigCached,
+  maintainerIdentity,
+} from "./config.js";
+import {
+  displayNameForMaintainerChat,
+} from "./maintainers.js";
 import { enqueueSend } from "./send-queue.js";
 import {
   isChatMuted,
   listActiveMutes,
   loadChatEscalationState,
   loadMaintainerPending,
+  maintainerMemoryPickTtlMs,
   muteChat,
   saveChatEscalationState,
   saveMaintainerPending,
   unmuteChat,
 } from "./state-store.js";
-import { decideCustomerEscalation, decideCustomerEscalationRules, downgradeWhenEscalationDisabled } from "./decision.js";
-import { nextChatStateAfterTriage } from "./triage.js";
+import { decideCustomerEscalation } from "./decision.js";
+import { downgradeExecutedWhenEscalationDisabled } from "./triage-normalize.js";
+import { nextChatStateAfterExecuted } from "./triage-state.js";
+import type { ExecutedAction } from "./triage-normalize.js";
+import {
+  formatMaintainerBlockedChat,
+  formatMaintainerMenu,
+} from "./maintainer-menu.js";
+import {
+  formatAgentHandoffAlert,
+  formatEscalationAlert,
+  formatLowConfidenceFyi,
+  formatMuteListMessage,
+  formatNoMutesToClear,
+  formatUnmutePickPrompt,
+  formatMaintainerActionBroadcast,
+} from "./maintainer-notify.js";
+import { formatWechatText } from "./wechat-line-wrap.js";
+import type { MaintainerMessageOutcome } from "./types.js";
 import type {
   EscalationConfig,
   PrivateTriageOutcome,
-  TriageResult,
 } from "./types.js";
 import type { TranscriptEntry } from "../transcript.js";
+import {
+  tryMaintainerWikiOpsReply,
+} from "../ops/wiki-sniff.js";
+import {
+  formatMemoryPickList,
+  formatMemorySnapshot,
+  parseMaintainerMemoryCommand,
+  resolveMemoryTarget,
+} from "../ops/memory-peek.js";
+import { pickMaintainerCandidate } from "../ops/pick-candidate.js";
+import type { MemoryClient } from "../memory-client.js";
+import type { WikiClient } from "../wiki-client.js";
 
 function combinedText(messages: Message[]): string {
   return messages
@@ -28,75 +63,98 @@ function combinedText(messages: Message[]): string {
     .join("\n");
 }
 
-function formatMuteList(): string {
-  const mutes = listActiveMutes();
-  if (mutes.length === 0) {
-    return "当前没有 mute 中的客户会话。";
-  }
-  return mutes
-    .map((m, i) => {
-      const leftMs = m.mutedUntil - Date.now();
-      const leftH = Math.max(0, Math.ceil(leftMs / (60 * 60 * 1000)));
-      const tag = m.reason === "escalate_a" ? "转人工" : "试探升级";
-      return `${i + 1}) ${m.chatName}（${tag}，约剩 ${leftH}h）`;
-    })
-    .join("\n");
-}
-
-function formatAlert(params: {
-  chatName: string;
-  chatId: string;
-  trigger: string;
-  reason: string;
-  userLines: string[];
-  customerLineSent: boolean;
-  muteHours: number;
-}): string {
-  const recent = params.userLines.slice(-4).map((l) => `- ${l}`);
-  return [
-    "【需处理】CocoCat",
-    `客户：${params.chatName}`,
-    `chatId：${params.chatId}`,
-    `触发：${params.trigger}`,
-    `原因：${params.reason}`,
-    "最近原话：",
-    ...recent,
-    `对客户：${params.customerLineSent ? "已发转接话术" : "未发转接话术"}`,
-    `mute：${params.muteHours}h`,
-  ].join("\n");
-}
-
 export class EscalationService {
-  readonly config: EscalationConfig;
+  private _config: EscalationConfig;
+  private readonly configFrozen: boolean;
 
   constructor(
     private client: WeChatClient,
     config?: EscalationConfig,
   ) {
-    this.config = config ?? loadEscalationConfig();
+    this.configFrozen = config !== undefined;
+    this._config = config ?? loadEscalationConfigCached();
+  }
+
+  get config(): EscalationConfig {
+    this.ensureConfigFresh();
+    return this._config;
+  }
+
+  private ensureConfigFresh(): void {
+    if (this.configFrozen) return;
+
+    const prevIdentity = maintainerIdentity(this._config);
+    this._config = loadEscalationConfigCached();
+    const nextIdentity = maintainerIdentity(this._config);
+    if (prevIdentity === nextIdentity) return;
+
+    saveMaintainerPending(null);
+    const count = this._config.maintainers.filter(
+      (m) => m.chatId || m.displayName,
+    ).length;
+    console.log(
+      `[pi-wechat] escalation: maintainer set changed (${count} configured)`,
+    );
   }
 
   isEnabled(): boolean {
     return this.config.enabled;
   }
 
-  isMaintainerChat(chatId: string): boolean {
-    if (!this.config.enabled) return false;
-    if (
-      this.config.maintainerChatId &&
-      chatId === this.config.maintainerChatId
-    ) {
-      return true;
-    }
-    return false;
+  isAgentHandoffEnabled(): boolean {
+    return this.config.enabled && this.config.agentHandoffEnabled;
   }
 
+  isMaintainerChat(chatId: string): boolean {
+    if (!this.config.enabled) return false;
+    return this.config.maintainers.some(
+      (m) => m.chatId && m.chatId === chatId,
+    );
+  }
+
+  private pickBestChatMatch<T extends { id?: string; name?: string }>(
+    query: string,
+    chats: T[],
+  ): T | undefined {
+    const q = query.trim().toLowerCase();
+    if (!q || chats.length === 0) return undefined;
+    const exact = chats.find(
+      (c) => c.name?.trim().toLowerCase() === q,
+    );
+    if (exact?.id) return exact;
+    const partial = chats.find((c) =>
+      c.name?.trim().toLowerCase().includes(q),
+    );
+    if (partial?.id) return partial;
+    return chats.find((c) => c.id) ?? chats[0];
+  }
+
+  private async resolveAllMaintainerChatIds(): Promise<string[]> {
+    const ids = new Set<string>();
+    for (const m of this.config.maintainers) {
+      if (m.chatId?.trim()) {
+        ids.add(m.chatId.trim());
+        continue;
+      }
+      if (!m.displayName?.trim()) continue;
+      try {
+        const chats = await this.client.findChats(m.displayName.trim());
+        const hit = this.pickBestChatMatch(m.displayName, chats);
+        if (hit?.id) ids.add(hit.id);
+      } catch (err) {
+        console.warn(
+          `[pi-wechat] escalation: findChats failed for maintainer "${m.displayName}":`,
+          err,
+        );
+      }
+    }
+    return [...ids];
+  }
+
+  /** @deprecated 使用 resolveAllMaintainerChatIds；保留首 id 供过渡 */
   private async resolveMaintainerChatId(): Promise<string | null> {
-    if (this.config.maintainerChatId) return this.config.maintainerChatId;
-    if (!this.config.maintainerDisplayName) return null;
-    const chats = await this.client.findChats(this.config.maintainerDisplayName);
-    const hit = chats[0];
-    return hit?.id ?? null;
+    const ids = await this.resolveAllMaintainerChatIds();
+    return ids[0] ?? null;
   }
 
   async sendText(chatId: string, text: string): Promise<void> {
@@ -105,27 +163,53 @@ export class EscalationService {
     });
   }
 
-  async notifyMaintainer(text: string): Promise<void> {
+  async notifyAllMaintainers(text: string | string[]): Promise<void> {
     if (!this.config.enabled) return;
-    const maintainerId = await this.resolveMaintainerChatId();
-    if (!maintainerId) {
+    const ids = await this.resolveAllMaintainerChatIds();
+    if (ids.length === 0) {
       console.warn(
-        "[pi-wechat] escalation: maintainer chatId not configured",
+        "[pi-wechat] escalation: no maintainer chatIds configured",
       );
       return;
     }
-    await this.sendText(maintainerId, text);
+    const body = Array.isArray(text)
+      ? formatWechatText(text)
+      : text.includes("\n")
+        ? formatWechatText(text.split("\n"))
+        : formatWechatText([text]);
+
+    await Promise.allSettled(
+      ids.map(async (id) => {
+        try {
+          await this.sendText(id, body);
+        } catch (err) {
+          console.error(
+            `[pi-wechat] escalation: failed to notify maintainer ${id}:`,
+            err,
+          );
+        }
+      }),
+    );
   }
 
-  triagePrivateChat(
+  async notifyMaintainer(text: string | string[]): Promise<void> {
+    await this.notifyAllMaintainers(text);
+  }
+
+  async triagePrivateChat(
     chatId: string,
     messages: Message[],
-  ): TriageResult {
+    transcriptEntries: TranscriptEntry[] = [],
+  ): Promise<
+    Awaited<ReturnType<typeof decideCustomerEscalation>>
+  > {
     const state = loadChatEscalationState(chatId);
-    return decideCustomerEscalationRules({
+    return decideCustomerEscalation({
       combinedText: combinedText(messages),
       chatState: state,
       config: this.config,
+      messages,
+      transcriptEntries,
     });
   }
 
@@ -146,102 +230,182 @@ export class EscalationService {
       transcriptEntries,
     });
 
-    let action = hybrid.action;
+    let executed = hybrid.executedAction;
     if (!this.config.enabled) {
-      action = downgradeWhenEscalationDisabled(action);
+      executed = downgradeExecutedWhenEscalationDisabled(executed);
     }
 
-    const result: TriageResult = {
-      action,
-      reason: `${hybrid.reason}@${hybrid.source}`,
-    };
-    const nextState = nextChatStateAfterTriage(prevState, result);
+    const reason = `${hybrid.reason}@${hybrid.source}`;
+    const nextState = nextChatStateAfterExecuted(prevState, executed);
     saveChatEscalationState(chatId, nextState);
 
-    switch (result.action) {
-      case "silent":
+    console.log(
+      `[pi-wechat] ${chatName}: gate=${hybrid.gate} executed=${executed} display=${hybrid.action} (${reason})`,
+    );
+
+    return this.applyExecutedGate({
+      chatId,
+      chatName,
+      executed,
+      reason,
+      confidence: hybrid.confidence,
+      userLines,
+    });
+  }
+
+  private async applyExecutedGate(params: {
+    chatId: string;
+    chatName: string;
+    executed: ExecutedAction;
+    reason: string;
+    confidence: number;
+    userLines: string[];
+  }): Promise<PrivateTriageOutcome> {
+    const { chatId, chatName, executed, reason, confidence, userLines } =
+      params;
+
+    switch (executed) {
+      case "CONTINUE_AGENT":
+        return { status: "continue", confidence };
+      case "NO_REPLY":
         console.log(
-          `[pi-wechat] ${chatName}: unified gate silent (${result.reason})`,
+          `[pi-wechat] ${chatName}: unified gate no_reply (${reason})`,
         );
         return { status: "done" };
-      case "reply":
-        return { status: "continue", confidence: hybrid.confidence };
-      case "ignore":
+      case "SEND_DEFLECT_LINE":
         console.log(
-          `[pi-wechat] ${chatName}: unified gate ignore (${result.reason})`,
+          `[pi-wechat] ${chatName}: unified gate deflect (${reason}) — customer silent`,
         );
         return { status: "done" };
-      case "deflect":
+      case "HANDOFF_ESCALATE":
         console.log(
-          `[pi-wechat] ${chatName}: unified gate deflect (${result.reason})`,
+          `[pi-wechat] ${chatName}: unified gate escalate (${reason}) — customer silent`,
         );
-        await this.sendText(chatId, this.config.deflectLine);
-        return { status: "done" };
-      case "escalate_a":
-        console.log(
-          `[pi-wechat] ${chatName}: unified gate escalate (${result.reason})`,
-        );
-        await this.sendText(chatId, this.config.customerLine);
         muteChat(
           chatId,
           chatName,
           "escalate_a",
           this.config.muteHoursEscalate,
+          { lastUserLine: userLines.at(-1) },
         );
         appendConsoleEvent({
           kind: "escalate_a",
           chatId,
           chatName,
-          reason: result.reason,
+          reason,
           topic: userLines.at(-1)?.slice(0, 48),
         });
         if (this.config.notifyEscalate) {
           await this.notifyMaintainer(
-            formatAlert({
+            formatEscalationAlert({
               chatId,
               chatName,
               trigger: "escalate_a",
-              reason: result.reason,
+              reason,
               userLines,
-              customerLineSent: true,
               muteHours: this.config.muteHoursEscalate,
             }),
           );
         }
         return { status: "done" };
-      case "probe_b":
+      case "CODE_TRIGGERED_HANDOFF":
+      case "HANDOFF_PROBE":
         console.log(
-          `[pi-wechat] ${chatName}: unified gate probe_b (${result.reason})`,
+          `[pi-wechat] ${chatName}: unified gate probe handoff (${reason})`,
         );
         muteChat(
           chatId,
           chatName,
           "probe_b",
           this.config.muteHoursProbeLoop,
+          { lastUserLine: userLines.at(-1) },
         );
         appendConsoleEvent({
           kind: "probe_b",
           chatId,
           chatName,
-          reason: result.reason,
+          reason,
           topic: userLines.at(-1)?.slice(0, 48),
         });
         if (this.config.notifyProbeLoop) {
           await this.notifyMaintainer(
-            formatAlert({
+            formatEscalationAlert({
               chatId,
               chatName,
               trigger: "probe_b",
-              reason: result.reason,
+              reason,
               userLines,
-              customerLineSent: false,
               muteHours: this.config.muteHoursProbeLoop,
             }),
           );
         }
         return { status: "done" };
       default:
-        return { status: "continue", confidence: hybrid.confidence };
+        return { status: "continue", confidence };
+    }
+  }
+
+  /** 主 Agent 工具 request_human_handoff：mute + 维护者告警（客户侧静默）。 */
+  async applyAgentHandoff(params: {
+    chatId: string;
+    chatName: string;
+    summary: string;
+    reason: string;
+    userLines: string[];
+    turnId?: string;
+  }): Promise<void> {
+    if (!this.isAgentHandoffEnabled()) {
+      console.warn(
+        `[pi-wechat] ${params.chatName}: agent handoff skipped (disabled)`,
+      );
+      return;
+    }
+    if (isChatMuted(params.chatId)) {
+      console.warn(
+        `[pi-wechat] ${params.chatName}: agent handoff skipped (already muted)`,
+      );
+      return;
+    }
+
+    const { chatId, chatName, summary, reason, userLines, turnId } = params;
+    console.log(
+      `[pi-wechat] ${chatName}: agent handoff (${reason}) — customer silent — ${summary.slice(0, 80)}`,
+    );
+
+    muteChat(
+      chatId,
+      chatName,
+      "escalate_a",
+      this.config.muteHoursEscalate,
+      { lastUserLine: userLines.at(-1) },
+    );
+    appendConsoleEvent({
+      kind: "agent_handoff",
+      chatId,
+      chatName,
+      turnId,
+      reason: `${reason}: ${summary}`.slice(0, 240),
+      topic: summary.slice(0, 48),
+    });
+    appendConsoleEvent({
+      kind: "escalate_a",
+      chatId,
+      chatName,
+      reason: `agent_handoff: ${summary}`.slice(0, 240),
+      topic: summary.slice(0, 48),
+    });
+
+    if (this.config.notifyEscalate) {
+      await this.notifyMaintainer(
+        formatAgentHandoffAlert({
+          chatId,
+          chatName,
+          reason,
+          summary,
+          userLines,
+          muteHours: this.config.muteHoursEscalate,
+        }),
+      );
     }
   }
 
@@ -278,65 +442,159 @@ export class EscalationService {
       topic: params.userLines.at(-1)?.slice(0, 48),
     });
     await this.notifyMaintainer(
-      [
-        "【低置信 FYI】CocoCat",
-        `客户：${params.chatName}`,
-        `chatId：${params.chatId}`,
-        `confidence：${confidence.toFixed(2)}（阈值 ${this.config.lowConfidenceThreshold}）`,
-        "最近原话：",
-        ...params.userLines.slice(-3).map((l) => `- ${l}`),
-        "说明：已自动回复客户；请留意是否需人工跟进。",
-      ].join("\n"),
+      formatLowConfidenceFyi({
+        chatId: params.chatId,
+        chatName: params.chatName,
+        confidence,
+        threshold: this.config.lowConfidenceThreshold,
+        userLines: params.userLines,
+      }),
     );
   }
 
-  async handleMaintainerMessage(text: string): Promise<void> {
-    if (!this.config.enabled) return;
-
-    const maintainerId = await this.resolveMaintainerChatId();
-    if (!maintainerId) return;
+  async handleMaintainerMessage(
+    actorChatId: string,
+    text: string,
+    ctx?: {
+      wikiEnabled?: boolean;
+      wikiClient?: WikiClient;
+      memoryClient?: MemoryClient;
+    },
+  ): Promise<MaintainerMessageOutcome> {
+    if (!this.config.enabled) return "handled";
+    if (!this.isMaintainerChat(actorChatId)) return "handled";
 
     const body = text.trim();
-    if (!body) return;
+    if (!body) return "handled";
+
+    const operatorName = displayNameForMaintainerChat(
+      this.config.maintainers,
+      actorChatId,
+    );
+
+    const wikiReply = await tryMaintainerWikiOpsReply(
+      body,
+      ctx?.wikiClient,
+      ctx?.wikiEnabled === true,
+    );
+    if (wikiReply !== null) {
+      await this.sendText(actorChatId, wikiReply);
+      return "handled";
+    }
 
     const pending = loadMaintainerPending();
-    if (pending?.action === "pick_unmute") {
-      const picked = this.pickCandidate(pending.candidates, body);
+    if (pending?.action === "pick_memory") {
+      const picked = pickMaintainerCandidate(pending.candidates, body);
       if (!picked) {
         await this.sendText(
-          maintainerId,
+          actorChatId,
+          "没对上号。请回复序号（如 1）、更完整备注名，或 chatId。",
+        );
+        return "handled";
+      }
+      if (!ctx?.memoryClient) {
+        await this.sendText(actorChatId, "Memory gateway 不可用。");
+        saveMaintainerPending(null);
+        return "handled";
+      }
+      saveMaintainerPending(null);
+      const snapshot = await formatMemorySnapshot(
+        picked,
+        ctx.memoryClient,
+      );
+      await this.sendText(actorChatId, snapshot);
+      return "handled";
+    }
+
+    if (pending?.action === "pick_unmute") {
+      const picked = pickMaintainerCandidate(pending.candidates, body);
+      if (!picked) {
+        await this.sendText(
+          actorChatId,
           "没对上号。请回复序号（如 1）或客户备注名。",
         );
-        return;
+        return "handled";
       }
       unmuteChat(picked.chatId);
       saveMaintainerPending(null);
-      await this.sendText(
-        maintainerId,
-        `已恢复对「${picked.chatName}」的自动回复。`,
+      await this.notifyAllMaintainers(
+        formatMaintainerActionBroadcast(
+          operatorName,
+          `已恢复对「${picked.chatName}」的自动回复。`,
+        ),
       );
-      return;
+      return "handled";
+    }
+
+    if (/^菜单$/u.test(body)) {
+      await this.sendText(
+        actorChatId,
+        formatMaintainerMenu({ wikiEnabled: ctx?.wikiEnabled === true }),
+      );
+      return "handled";
+    }
+
+    const memoryQuery = parseMaintainerMemoryCommand(body);
+    if (memoryQuery !== null) {
+      if (!ctx?.memoryClient) {
+        await this.sendText(actorChatId, "Memory gateway 不可用。");
+        return "handled";
+      }
+      const resolved = await resolveMemoryTarget(memoryQuery, this.client);
+      switch (resolved.kind) {
+        case "error":
+          await this.sendText(actorChatId, resolved.message);
+          return "handled";
+        case "single": {
+          const snapshot = await formatMemorySnapshot(
+            resolved.candidate,
+            ctx.memoryClient,
+          );
+          await this.sendText(actorChatId, snapshot);
+          return "handled";
+        }
+        case "too_many":
+          await this.sendText(
+            actorChatId,
+            `命中 ${resolved.count} 个，过多。请用 chatId 或更长备注名。`,
+          );
+          return "handled";
+        case "pick":
+          saveMaintainerPending({
+            action: "pick_memory",
+            query: resolved.query,
+            candidates: resolved.candidates,
+            expiresAt: Date.now() + maintainerMemoryPickTtlMs(),
+          });
+          await this.sendText(
+            actorChatId,
+            formatMemoryPickList(resolved.query, resolved.candidates),
+          );
+          return "handled";
+      }
     }
 
     if (/^列表$/u.test(body)) {
-      await this.sendText(maintainerId, formatMuteList());
-      return;
+      await this.sendText(actorChatId, formatMuteListMessage());
+      return "handled";
     }
 
     if (/^(已处理|解除)$/u.test(body)) {
       const mutes = listActiveMutes();
       if (mutes.length === 0) {
-        await this.sendText(maintainerId, "当前没有需要解除的 mute 会话。");
-        return;
+        await this.sendText(actorChatId, formatNoMutesToClear());
+        return "handled";
       }
       if (mutes.length === 1) {
         const only = mutes[0]!;
         unmuteChat(only.chatId);
-        await this.sendText(
-          maintainerId,
-          `已恢复对「${only.chatName}」的自动回复。`,
+        await this.notifyAllMaintainers(
+          formatMaintainerActionBroadcast(
+            operatorName,
+            `已恢复对「${only.chatName}」的自动回复。`,
+          ),
         );
-        return;
+        return "handled";
       }
       saveMaintainerPending({
         action: "pick_unmute",
@@ -346,40 +604,22 @@ export class EscalationService {
         })),
       });
       await this.sendText(
-        maintainerId,
-        `目前有 ${mutes.length} 个 mute 会话：\n${formatMuteList()}\n请回复序号或客户名。`,
+        actorChatId,
+        formatUnmutePickPrompt(mutes.length),
       );
-      return;
+      return "handled";
     }
 
-    await this.sendText(
-      maintainerId,
-      "可用指令：列表 / 已处理 / 解除",
-    );
-  }
-
-  private pickCandidate(
-    candidates: Array<{ chatId: string; chatName: string }>,
-    input: string,
-  ): { chatId: string; chatName: string } | null {
-    const trimmed = input.trim();
-    const asIndex = Number(trimmed);
-    if (
-      Number.isInteger(asIndex) &&
-      asIndex >= 1 &&
-      asIndex <= candidates.length
-    ) {
-      return candidates[asIndex - 1] ?? null;
+    const activeMutes = listActiveMutes();
+    if (activeMutes.length > 0) {
+      await this.sendText(
+        actorChatId,
+        formatMaintainerBlockedChat(activeMutes.length),
+      );
+      return "blocked";
     }
-    const lower = trimmed.toLowerCase();
-    return (
-      candidates.find(
-        (c) =>
-          c.chatName === trimmed ||
-          c.chatName.toLowerCase().includes(lower) ||
-          lower.includes(c.chatName.toLowerCase()),
-      ) ?? null
-    );
+
+    return "chat";
   }
 
   shouldSkipMutedCustomer(chatId: string, chatName: string): boolean {

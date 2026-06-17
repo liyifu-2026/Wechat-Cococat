@@ -118,6 +118,7 @@ pub fn run() {
             commands::project::open_project,
             commands::project::open_project_folder,
             commands::search::search_project,
+            commands::search::wiki_search_federated,
             api_server_status,
             api_server_reload_config,
             commands::vectorstore::vector_upsert,

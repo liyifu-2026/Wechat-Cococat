@@ -6,6 +6,9 @@
 export const LAYOUT_KEYS = {
   activeModule: "cococat.console.activeModule",
   activeModuleV2Migrated: "cococat.console.v2ModuleMigrated",
+  wechatShellTab: "cococat.wechat.shellTab",
+  wechatShellMigrated: "cococat.wechat.shellMigrated",
+  knowledgeShellTab: "cococat.knowledge.shellTab",
   brainTab: "cococat.brain.lastTab",
   systemPanel: "cococat.system.lastPanel",
   systemAdvancedTab: "cococat.system.advancedTab",
@@ -26,11 +29,121 @@ export type ConsoleModuleV2 = "overview" | "inbox" | "brain" | "system"
 /** v2 侧栏四区（Phase 6A：legacy `wiki` 模块已退役） */
 export type ConsoleModule = ConsoleModuleV2
 
+/** 微信壳层主导航 Tab */
+export type WechatShellTab = "chats" | "contacts" | "kb"
+
+export const WECHAT_SHELL_TABS: readonly WechatShellTab[] = [
+  "chats",
+  "contacts",
+  "kb",
+]
+
 export type BrainTab = "kb" | "persona" | "routing"
+
+/** 知识库壳层子 Tab（含 Wiki 搜索） */
+export type KnowledgeShellTab = BrainTab | "search"
+
+export const KNOWLEDGE_SHELL_TABS: readonly KnowledgeShellTab[] = [
+  "kb",
+  "persona",
+  "routing",
+  "search",
+]
+
+/** 齿轮设置 Modal 一级分组 */
+export type WechatSettingsGroup =
+  | "ai-settings"
+  | "wechat-ops"
+  | "system-advanced"
+
+export const WECHAT_SETTINGS_GROUPS: readonly WechatSettingsGroup[] = [
+  "ai-settings",
+  "wechat-ops",
+  "system-advanced",
+]
+
+/** 齿轮设置 Modal 二级 Tab */
+export type WechatSettingsTab =
+  | "llm-config"
+  | "embedding"
+  | "web-search"
+  | "brain-kb"
+  | "brain-persona"
+  | "brain-routing"
+  | "customer-types"
+  | "about"
+  /** @deprecated migrated in normalizeWechatSettingsTab */
+  | "output"
+  | "source-watch"
+  | "scheduled-import"
+  | "wechat-connect"
+  | "cococat"
+  | "stack-service"
+  | "stack-logs"
+  | "interface"
+  | "network"
+  | "api-server"
+  | "maintenance"
+  | "memory"
+  | "bridge"
+  | "agent"
+  | "brain"
+
+export function normalizeWechatSettingsTab(
+  tab?: WechatSettingsTab | string | null,
+): WechatSettingsTab {
+  switch (tab) {
+    case "brain":
+    case "brain-kb":
+      return "customer-types"
+    case "brain-persona":
+    case "brain-routing":
+    case "customer-types":
+    case "llm-config":
+    case "embedding":
+    case "web-search":
+    case "about":
+      return tab
+    case "cococat":
+    case "stack-service":
+    case "stack-logs":
+    case "wechat-connect":
+      return "about"
+    default:
+      return "llm-config"
+  }
+}
+
+export function brainTabFromSettingsTab(tab: WechatSettingsTab): BrainTab | null {
+  if (tab === "brain-kb") return "kb"
+  if (tab === "brain-persona") return "persona"
+  if (tab === "brain-routing") return "routing"
+  if (tab === "brain") return "kb"
+  return null
+}
+
+export function settingsTabForBrainTab(tab: BrainTab): WechatSettingsTab {
+  if (tab === "kb") return "brain-kb"
+  if (tab === "persona") return "brain-persona"
+  return "brain-routing"
+}
+
+export function brainTabToKnowledgeTab(tab: BrainTab): KnowledgeShellTab {
+  return tab
+}
+
+export function knowledgeTabToBrainTab(
+  tab: KnowledgeShellTab,
+): BrainTab | null {
+  if (tab === "search") return null
+  return tab
+}
+
 export type SystemPanel =
   | "services"
   | "program"
-  | "wikiModels"
+  | "models"
+  | "wiki"
   | "knowledge"
   | "logs"
   | "advanced"
@@ -48,7 +161,8 @@ export const BRAIN_TABS: readonly BrainTab[] = ["kb", "persona", "routing"]
 export const SYSTEM_PANELS: readonly SystemPanel[] = [
   "services",
   "program",
-  "wikiModels",
+  "models",
+  "wiki",
   "knowledge",
   "logs",
   "advanced",
@@ -188,6 +302,21 @@ export function migrateSystemLayoutV2(): void {
   }
 }
 
+/** Split legacy「Wiki 与模型」panel → wiki + models. */
+export function migrateSystemPanelSplit(): void {
+  try {
+    const migratedKey = "cococat.system.wikiModelsSplitMigrated"
+    if (localStorage.getItem(migratedKey) === "1") return
+    const panel = localStorage.getItem(LAYOUT_KEYS.systemPanel)
+    if (panel === "wikiModels") {
+      saveStoredTab(LAYOUT_KEYS.systemPanel, "wiki")
+    }
+    localStorage.setItem(migratedKey, "1")
+  } catch {
+    // ignore
+  }
+}
+
 export function saveStoredTab(key: string, tab: string): void {
   try {
     localStorage.setItem(key, tab)
@@ -214,4 +343,50 @@ export function defaultWeChatTab(driverUp: boolean, loggedIn: boolean): WeChatTa
 export function defaultMemoryTab(memoryUp: boolean): MemoryTab {
   if (!memoryUp) return "overview"
   return loadStoredTab(LAYOUT_KEYS.memoryTab, MEMORY_TABS, "playground")
+}
+
+export function migrateLegacyModuleToWechatTab(
+  module: ConsoleModule,
+): WechatShellTab {
+  void module
+  return "chats"
+}
+
+/** ai-lab Tab 已移除 → 默认聊天 */
+export function migrateAiLabShellTab(): void {
+  try {
+    const key = "cococat.wechat.aiLabRemovedMigrated"
+    if (localStorage.getItem(key) === "1") return
+    const raw = localStorage.getItem(LAYOUT_KEYS.wechatShellTab)
+    if (raw === "ai-lab") {
+      saveStoredTab(LAYOUT_KEYS.wechatShellTab, "chats")
+    }
+    localStorage.setItem(key, "1")
+  } catch {
+    // ignore
+  }
+}
+
+/** v3：四区 Console → 微信壳层 Tab */
+export function migrateWechatShellLayout(): void {
+  try {
+    if (localStorage.getItem(LAYOUT_KEYS.wechatShellMigrated) === "1") return
+    const raw = localStorage.getItem(LAYOUT_KEYS.activeModule)
+    const module = migrateStoredActiveModule(raw)
+    const tab = migrateLegacyModuleToWechatTab(module)
+    saveStoredTab(LAYOUT_KEYS.wechatShellTab, tab)
+    localStorage.setItem(LAYOUT_KEYS.wechatShellMigrated, "1")
+  } catch {
+    // ignore
+  }
+}
+
+export function loadWechatShellTab(): WechatShellTab {
+  migrateWechatShellLayout()
+  migrateAiLabShellTab()
+  return loadStoredTab(LAYOUT_KEYS.wechatShellTab, WECHAT_SHELL_TABS, "chats")
+}
+
+export function saveWechatShellTab(tab: WechatShellTab): void {
+  saveStoredTab(LAYOUT_KEYS.wechatShellTab, tab)
 }

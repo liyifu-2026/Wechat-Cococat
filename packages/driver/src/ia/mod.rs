@@ -3,6 +3,7 @@ pub mod helpers;
 pub mod selectors;
 pub mod states;
 pub mod types;
+pub mod wechat_compose;
 
 pub use types::{A11yNode, IAState, IdentifiedState, IdentifiedStates, IdentifyArgs};
 

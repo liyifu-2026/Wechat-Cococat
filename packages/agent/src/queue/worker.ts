@@ -5,6 +5,7 @@ import type { SessionManager } from "../session.js";
 import { drainPendingLocalIds } from "./pending.js";
 import { collectUnseenLocalIds } from "./enqueue.js";
 import {
+  filterUnseenLocalIds,
   markSeenLocalIds,
   snapshotAlreadyAnswered,
 } from "./snapshot-guard.js";
@@ -12,6 +13,7 @@ import {
   evaluateInboundFastDiscard,
   logFastDiscard,
 } from "./fast-discard.js";
+import { reconcileTranscriptForChat } from "../reconcile-transcript.js";
 import { cancelPendingOutboundForChat } from "./cancel-pending-outbound.js";
 import {
   bullmqConnection,
@@ -49,6 +51,8 @@ export async function startQueueWorkers(
       if (snapshot.length === 0) {
         snapshot = await collectUnseenLocalIds(client, chatId);
       }
+
+      snapshot = filterUnseenLocalIds(chatId, snapshot);
 
       if (snapshot.length === 0) {
         job.log("empty snapshot after drain");
@@ -88,6 +92,15 @@ export async function startQueueWorkers(
     markSeenLocalIds(chatId, fastDiscard.localIds);
     logFastDiscard(chatName, fastDiscard.reason, chatId);
     job.log(`fast-discard: ${fastDiscard.reason}`);
+    if (fastDiscard.reason === "agent_proxy_off") {
+      try {
+        await reconcileTranscriptForChat(client, chatId);
+      } catch (err) {
+        job.log(
+          `reconcile after agent_proxy_off failed: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
     return;
   }
 

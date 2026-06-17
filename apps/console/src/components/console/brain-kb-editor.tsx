@@ -34,7 +34,7 @@ export function BrainKbEditor({ initialEditMode = false }: BrainKbEditorProps) {
   }
 
   return (
-    <div className="flex h-full flex-col">
+    <div className="flex h-full min-h-0 flex-col">
       <div className="flex shrink-0 items-center justify-between border-b px-3 py-2">
         <span className="truncate text-xs text-muted-foreground" title={selectedFile}>
           {getFileName(selectedFile)}

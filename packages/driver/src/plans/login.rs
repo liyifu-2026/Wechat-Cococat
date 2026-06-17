@@ -29,6 +29,7 @@ pub struct LoginPlanState {
     pub account_dir: Option<String>,
     pub last_emitted_qr: Option<String>,
     pub emitted_phone_confirm: bool,
+    pub emitted_login_account: bool,
     pub detect_retries: u32,
 }
 
@@ -45,6 +46,7 @@ impl Plan for LoginPlan {
             account_dir: None,
             last_emitted_qr: None,
             emitted_phone_confirm: false,
+            emitted_login_account: false,
             detect_retries: 0,
         }
     }
@@ -159,6 +161,28 @@ fn handle_authenticating(
         }
 
         MainWindowView::LoginAccount => {
+            if !plan_state.emitted_login_account {
+                plan_state.emitted_login_account = true;
+                return Some(SelectedAction {
+                    action: actions::sequence(vec![
+                        Action::Emit {
+                            event: SubscriptionEvent {
+                                event_type: "login_account".to_string(),
+                                data: [(
+                                    "message".to_string(),
+                                    serde_json::Value::String(
+                                        "Signing in with saved account…".to_string(),
+                                    ),
+                                )]
+                                .into_iter()
+                                .collect(),
+                            },
+                        },
+                        actions::wait(500),
+                    ]),
+                    frame: frame(),
+                });
+            }
             let action = if params.new_account {
                 actions::click_switch_account()
             } else {

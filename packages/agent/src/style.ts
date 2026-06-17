@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 export type GroupMode = "bot" | "member";
@@ -23,7 +23,11 @@ export type ChatStyle = {
   /** 客服 thoughtful 延迟 ack 短语池 */
   thoughtfulAckPhrases?: string[];
   thoughtfulReflect?: boolean;
+  /** false = observe-only（Console 人工接管）；默认 true */
+  agentProxyEnabled?: boolean;
 };
+
+const styleCache = new Map<string, { mtimeMs: number; style: ChatStyle }>();
 
 const SERVICE_STYLE_DEFAULTS: Pick<
   ChatStyle,
@@ -44,6 +48,19 @@ const LEGACY_STYLE_DEFAULTS: ChatStyle = {
 
 export function isServicePersona(style: ChatStyle): boolean {
   return (style.personaMode ?? "service") === "service";
+}
+
+/** Agent 是否代发；缺省 true。 */
+export function isAgentProxyEnabled(style: ChatStyle): boolean {
+  return style.agentProxyEnabled !== false;
+}
+
+export function clearChatStyleCache(stylePath?: string): void {
+  if (stylePath) {
+    styleCache.delete(stylePath);
+  } else {
+    styleCache.clear();
+  }
 }
 
 /** service 模式应用客服默认节奏；friend 保留 per-chat / legacy 默认。 */
@@ -75,6 +92,25 @@ function parseDelay(value: unknown): DelayRange {
 function parsePersonaMode(value: unknown): PersonaMode | undefined {
   if (value === "service" || value === "friend") return value;
   return undefined;
+}
+
+/** Per-turn 读取 style.json；mtime 变化时失效缓存。 */
+export function loadChatStyleCached(stylePath: string): ChatStyle {
+  if (!existsSync(stylePath)) {
+    return loadChatStyle(stylePath);
+  }
+  try {
+    const mtimeMs = statSync(stylePath).mtimeMs;
+    const cached = styleCache.get(stylePath);
+    if (cached && cached.mtimeMs === mtimeMs) {
+      return cached.style;
+    }
+    const style = loadChatStyle(stylePath);
+    styleCache.set(stylePath, { mtimeMs, style });
+    return style;
+  } catch {
+    return loadChatStyle(stylePath);
+  }
 }
 
 export function loadChatStyle(stylePath: string): ChatStyle {
@@ -127,6 +163,12 @@ export function loadChatStyle(stylePath: string): ChatStyle {
           ? true
           : raw.thoughtfulReflect === false
             ? false
+            : undefined,
+      agentProxyEnabled:
+        raw.agentProxyEnabled === false
+          ? false
+          : raw.agentProxyEnabled === true
+            ? true
             : undefined,
     };
     return resolveEffectiveStyle(loaded);

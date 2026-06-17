@@ -21,6 +21,12 @@ export class SeenStore {
     return this.seen.has(key);
   }
 
+  /** 从磁盘重载（worker markSeenLocalIds 后 Session 内存需对齐）。 */
+  reload(): void {
+    this.seen.clear();
+    this.load();
+  }
+
   add(key: string): void {
     this.seen.add(key);
   }

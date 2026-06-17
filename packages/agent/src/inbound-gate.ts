@@ -10,12 +10,17 @@ import {
 } from "./reply-guard.js";
 import type { MemoryHealthMonitor } from "./memory-health.js";
 import type { TranscriptEntry } from "./transcript.js";
-import { isServicePersona } from "./style.js";
+import {
+  isAgentProxyEnabled,
+  isServicePersona,
+  loadChatStyleCached,
+} from "./style.js";
 
 export type InboundGateDiscardReason =
   | ReplySkipReason
   | "group_buffer"
   | "muted_customer"
+  | "agent_proxy_off"
   | "triage_done"
   | "memory_unavailable";
 
@@ -77,6 +82,8 @@ export async function evaluateInboundGate(
 
   const isGroupChat = isGroup || chatId.includes("@chatroom");
   const isPrivateService = !isGroupChat && isServicePersona(chatCtx.style);
+  const isMaintainerChannel =
+    !isGroupChat && Boolean(escalation?.isMaintainerChat(chatId));
 
   if (
     !isGroupChat &&
@@ -89,6 +96,18 @@ export async function evaluateInboundGate(
       unseen: initialUnseen,
       shouldMarkSeen: true,
     };
+  }
+
+  if (!isGroupChat && !isMaintainerChannel) {
+    const liveStyle = loadChatStyleCached(chatCtx.stylePath);
+    if (!isAgentProxyEnabled(liveStyle)) {
+      return {
+        action: "discard",
+        reason: "agent_proxy_off",
+        unseen: initialUnseen,
+        shouldMarkSeen: true,
+      };
+    }
   }
 
   const groupResult = applyGroupInbound({
@@ -113,7 +132,7 @@ export async function evaluateInboundGate(
   let { unseen, wasMentioned, groupPolicy, injectedBufferCount } = groupResult;
   let lastTriageConfidence: number | undefined;
 
-  if (isPrivateService && memoryHealth) {
+  if (isPrivateService && memoryHealth && !isMaintainerChannel) {
     const memoryOk = await memoryHealth.requireAvailable();
     if (!memoryOk) {
       return {
@@ -125,7 +144,7 @@ export async function evaluateInboundGate(
     }
   }
 
-  if (isPrivateService && escalation) {
+  if (isPrivateService && escalation && !isMaintainerChannel) {
     const previewLines = unseen
       .map((m) => m.content?.trim() ?? "")
       .filter(Boolean);
@@ -151,7 +170,6 @@ export async function evaluateInboundGate(
     const skipReason = evaluateReplySkip({
       chatId,
       cooldownMs: replyCooldownMs(chatCtx.style.replyCooldownMs),
-      transcriptEntries,
       wasMentioned,
     });
     if (skipReason) {

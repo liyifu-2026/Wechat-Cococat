@@ -20,9 +20,9 @@ function maskToken(token: string): string {
 
 export function CococatSettingsSection() {
   const { t } = useTranslation()
-  const setActiveModule = useConsoleStore((s) => s.setActiveModule)
-  const navigateSettings = useConsoleStore((s) => s.navigateSettings)
-  const navigateSystemAdvanced = useConsoleStore((s) => s.navigateSystemAdvanced)
+  const navigateBrain = useConsoleStore((s) => s.navigateBrain)
+  const openSettingsModal = useConsoleStore((s) => s.openSettingsModal)
+  const navigateSystemModels = useConsoleStore((s) => s.navigateSystemModels)
   const [paths, setPaths] = useState<CococatPaths | null>(null)
   const [token, setToken] = useState<string | null>(null)
   const [needsMigrate, setNeedsMigrate] = useState(false)
@@ -124,7 +124,7 @@ export function CococatSettingsSection() {
             <button
               type="button"
               className="text-primary underline-offset-2 hover:underline"
-              onClick={() => navigateSettings("cococat", "agent-llm")}
+              onClick={() => navigateSystemModels()}
             >
               {t("settings.sections.cococat.openAgentLlm")}
             </button>
@@ -145,24 +145,30 @@ export function CococatSettingsSection() {
         <Button
           variant="secondary"
           size="sm"
-          onClick={() => navigateSettings("cococat", "agent-llm")}
+          onClick={() => navigateSystemModels()}
         >
           <Settings2 className="mr-2 h-4 w-4" />
           {t("settings.sections.cococat.openAgentLlm")}
         </Button>
-        <Button variant="secondary" size="sm" onClick={() => setActiveModule("brain")}>
+        <Button variant="secondary" size="sm" onClick={() => navigateBrain()}>
           <ExternalLink className="mr-2 h-4 w-4" />
           {t("settings.sections.cococat.openAgent")}
         </Button>
         <Button
           variant="secondary"
           size="sm"
-          onClick={() => navigateSystemAdvanced("agent")}
+          onClick={() => navigateBrain("routing")}
         >
           <ExternalLink className="mr-2 h-4 w-4" />
           {t("settings.sections.cococat.openAgentRuntime")}
         </Button>
-        <Button variant="secondary" size="sm" onClick={() => setActiveModule("system")}>
+        <Button
+          variant="secondary"
+          size="sm"
+          onClick={() =>
+            openSettingsModal({ group: "system-advanced", tab: "about" })
+          }
+        >
           <ExternalLink className="mr-2 h-4 w-4" />
           {t("settings.sections.cococat.openStack")}
         </Button>

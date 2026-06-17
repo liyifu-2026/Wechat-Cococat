@@ -1,14 +1,14 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { WIKI_REGISTRY_PATH } from "./paths.js";
+import { wikiRegistryPath } from "./paths.js";
 
 export type WikiRegistry = Map<string, string>;
 
 export function loadWikiRegistry(): WikiRegistry {
   const map = new Map<string, string>();
-  if (!existsSync(WIKI_REGISTRY_PATH)) return map;
+  if (!existsSync(wikiRegistryPath())) return map;
   try {
-    const raw = JSON.parse(readFileSync(WIKI_REGISTRY_PATH, "utf8")) as Record<
+    const raw = JSON.parse(readFileSync(wikiRegistryPath(), "utf8")) as Record<
       string,
       string
     >;
@@ -32,7 +32,7 @@ export function writeWikiRegistry(registry: WikiRegistry): void {
     Object.entries(obj).sort(([a], [b]) => a.localeCompare(b)),
   );
   writeFileSync(
-    WIKI_REGISTRY_PATH,
+    wikiRegistryPath(),
     `${JSON.stringify(sorted, null, 2)}\n`,
     "utf8",
   );

@@ -23,7 +23,11 @@
 
     /* Path aliases */
     "baseUrl": ".",
-    "paths": { "@/*": ["./src/*"] }
+    "paths": {
+      "@/*": ["./src/*"],
+      "@cococat/shared/llm-stack": ["../../packages/shared/src/llm-stack.ts"],
+      "@cococat/shared/model-capabilities": ["../../packages/shared/src/model-capabilities.ts"]
+    }
   },
   "include": ["src"]
 }

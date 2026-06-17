@@ -23,3 +23,14 @@ export function markSeenLocalIds(chatId: string, localIds: number[]): void {
   }
   seen.persist();
 }
+
+/** 去掉已 markSeen 的 localId（pending 竞态 / job 重试防双发）。 */
+export function filterUnseenLocalIds(
+  chatId: string,
+  localIds: number[],
+): number[] {
+  if (localIds.length === 0) return [];
+  const chatCtx = ensureChatContext(chatId);
+  const seen = new SeenStore(chatCtx.seenPath, chatId);
+  return localIds.filter((id) => !seen.has(String(id)));
+}

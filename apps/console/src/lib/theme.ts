@@ -44,6 +44,19 @@ export function setThemeMode(mode: ThemeMode): void {
   bindSystemThemeListener(mode)
 }
 
+/** Toggle between explicit light and dark (leaves system on first use). */
+export function toggleLightDarkTheme(): ThemeMode {
+  const next: ThemeMode = document.documentElement.classList.contains("dark")
+    ? "light"
+    : "dark"
+  setThemeMode(next)
+  return next
+}
+
+export function isDarkRendered(): boolean {
+  return document.documentElement.classList.contains("dark")
+}
+
 function bindSystemThemeListener(mode: ThemeMode): void {
   if (systemListener) {
     window

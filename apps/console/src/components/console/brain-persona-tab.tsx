@@ -4,7 +4,7 @@ import { useTranslation } from "react-i18next"
 import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
 import { readConfigFile, writeConfigFile } from "@/lib/agent-config-client"
-import { STEALTH_BANNED_WORDS, checkStealthText } from "@/lib/stealth-check"
+import { checkStealthText } from "@/lib/stealth-check"
 
 export function BrainPersonaTab() {
   const { t } = useTranslation()
@@ -56,31 +56,13 @@ export function BrainPersonaTab() {
         </div>
       )}
 
-      <div className="mb-4 rounded-md border bg-muted/30 p-4">
-        <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-          {t("console.brain.stealthTitle")}
-        </h3>
-        <p className="mt-2 text-sm text-muted-foreground">
-          {t("console.brain.stealthHint")}
-        </p>
-        <div className="mt-3 flex flex-wrap gap-1.5">
-          {STEALTH_BANNED_WORDS.map((w) => (
-            <span
-              key={w}
-              className="rounded border border-dashed border-destructive/30 bg-destructive/5 px-2 py-0.5 text-[10px] text-destructive"
-            >
-              {w}
-            </span>
-          ))}
+      {!draftStealth.ok && persona.trim() && (
+        <div className="mb-4 rounded-md border border-destructive/40 bg-destructive/5 px-4 py-3 text-sm text-destructive">
+          {t("console.brain.stealthDraftFail", {
+            hits: draftStealth.hits.join("、"),
+          })}
         </div>
-        {!draftStealth.ok && persona.trim() && (
-          <p className="mt-2 text-xs text-destructive">
-            {t("console.brain.stealthDraftFail", {
-              hits: draftStealth.hits.join("、"),
-            })}
-          </p>
-        )}
-      </div>
+      )}
 
       <Label htmlFor="brain-persona" className="mb-2 shrink-0">
         {t("console.brain.personaLabel")}

@@ -7,6 +7,7 @@ export function useInboxMutes() {
   const batchBusy = useInboxMuteStore((s) => s.batchBusy)
   const refreshMutes = useInboxMuteStore((s) => s.refreshMutes)
   const unmuteChat = useInboxMuteStore((s) => s.unmuteChat)
+  const muteChat = useInboxMuteStore((s) => s.muteChat)
   const markAllDone = useInboxMuteStore((s) => s.markAllDone)
 
   const muteByChatId = useMemo(() => {
@@ -29,6 +30,7 @@ export function useInboxMutes() {
     batchBusy,
     refreshMutes,
     unmuteChat,
+    muteChat,
     markChatDone,
     markAllDone,
   }

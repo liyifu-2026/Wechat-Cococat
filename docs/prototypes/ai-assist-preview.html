@@ -1,0 +1,666 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AI 辅助 · 交互原型 v2</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    :root {
+      --nav-w: 72px;
+      --list-w: 280px;
+      --compose-h: 128px;
+      --header-h: 56px;
+      --panel-inset: 8px;
+      --bg: #111214;
+      --list-bg: #16171a;
+      --border: #2a2b30;
+      --text: #e8eaed;
+      --muted: #8b8f98;
+      --brand: #10b981;
+      --glow: rgba(16, 185, 129, 0.45);
+    }
+    html, body {
+      height: 100%; margin: 0;
+      font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+      background: #0d0e10; color: var(--text); overflow: hidden;
+    }
+
+    @keyframes liquid-spin {
+      to { transform: rotate(360deg); }
+    }
+    @keyframes glow-breathe {
+      0%, 100% { opacity: 0.55; filter: blur(18px); }
+      50% { opacity: 0.95; filter: blur(26px); }
+    }
+    @keyframes rim-shimmer {
+      0%, 100% { opacity: 0.35; }
+      50% { opacity: 0.75; }
+    }
+    @keyframes bubble-pulse {
+      0%, 100% { box-shadow: 0 0 20px rgba(16,185,129,.2), inset 0 1px 0 rgba(255,255,255,.15); }
+      50% { box-shadow: 0 0 36px rgba(16,185,129,.38), inset 0 1px 0 rgba(255,255,255,.22); }
+    }
+
+    .shell {
+      display: grid;
+      grid-template-columns: var(--nav-w) var(--list-w) minmax(0, 1fr);
+      grid-template-rows: 100vh;
+      width: 100vw; height: 100vh;
+    }
+
+    /* ── 液态玻璃 mixin ── */
+    .liquid-glass {
+      position: relative;
+      overflow: hidden;
+      isolation: isolate;
+      border: 1px solid rgba(255,255,255,.1);
+      background: rgba(22, 24, 28, 0.55);
+      backdrop-filter: blur(22px) saturate(1.35);
+      -webkit-backdrop-filter: blur(22px) saturate(1.35);
+    }
+    .liquid-glass > .glass-content { position: relative; z-index: 2; height: 100%; display: flex; flex-direction: column; min-height: 0; }
+    .liquid-glass .glass-aurora {
+      position: absolute; inset: -45%; z-index: 0; pointer-events: none;
+      background: conic-gradient(
+        from 0deg,
+        transparent 0deg,
+        rgba(16,185,129,.14) 55deg,
+        transparent 110deg,
+        rgba(45,212,191,.1) 180deg,
+        transparent 240deg,
+        rgba(52,211,153,.12) 300deg,
+        transparent 360deg
+      );
+      animation: liquid-spin 14s linear infinite;
+    }
+    .liquid-glass .glass-glow {
+      position: absolute; inset: -20%; z-index: 0; pointer-events: none;
+      background: radial-gradient(circle at 30% 20%, rgba(16,185,129,.35), transparent 55%),
+                  radial-gradient(circle at 80% 70%, rgba(45,212,191,.2), transparent 50%);
+      animation: glow-breathe 4.5s ease-in-out infinite;
+    }
+    .liquid-glass .glass-rim {
+      position: absolute; inset: 0; z-index: 1; pointer-events: none; border-radius: inherit;
+      box-shadow: inset 0 1px 0 rgba(255,255,255,.14), inset 0 -1px 0 rgba(0,0,0,.2);
+    }
+    .liquid-glass .glass-rim::after {
+      content: ""; position: absolute; inset: 0; border-radius: inherit;
+      border: 1px solid rgba(110,231,183,.18);
+      animation: rim-shimmer 3.2s ease-in-out infinite;
+    }
+
+    /* ── 导航 + 泡泡触发器 ── */
+    .nav {
+      display: flex; flex-direction: column; align-items: center; gap: 12px;
+      padding: 12px 0; background: #141518; border-right: 1px solid var(--border); z-index: 60;
+    }
+    .nav-logo {
+      width: 40px; height: 40px; border-radius: 10px;
+      background: rgba(16,185,129,.15); display: grid; place-items: center;
+      color: var(--brand); font-weight: 700; font-size: 14px;
+    }
+    .nav-spacer { flex: 1; min-height: 8px; }
+    .nav-btn {
+      width: 44px; height: 44px; border: none; border-radius: 10px;
+      background: transparent; color: var(--muted); font-size: 18px; cursor: pointer;
+    }
+    .nav-btn:hover { background: #222328; color: var(--text); }
+
+    .ai-trigger-wrap {
+      position: relative;
+      display: flex; align-items: center; justify-content: center;
+      width: 56px; height: 52px;
+    }
+    .ai-trigger-bubble {
+      position: absolute; inset: 0;
+      border-radius: 14px 22px 22px 14px;
+      opacity: 0; transform: scale(0.88);
+      transition: opacity .28s ease, transform .28s cubic-bezier(.2,.8,.2,1);
+      pointer-events: none;
+    }
+    .ai-trigger-wrap.open .ai-trigger-bubble {
+      opacity: 1; transform: scale(1);
+      animation: bubble-pulse 3s ease-in-out infinite;
+    }
+    .ai-trigger-bubble .glass-aurora { inset: -60%; animation-duration: 10s; }
+    .ai-trigger-bubble .glass-glow {
+      background: radial-gradient(circle at 40% 50%, rgba(16,185,129,.5), transparent 60%);
+    }
+    .nav-btn.sparkles {
+      position: relative; z-index: 3;
+      color: #6ee7b7; font-size: 20px;
+      background: transparent;
+    }
+    .ai-trigger-wrap.open .nav-btn.sparkles {
+      color: #a7f3d0;
+      text-shadow: 0 0 12px rgba(52,211,153,.8);
+    }
+
+    /* SVG 泡泡连接管 */
+    .bubble-connector-svg {
+      position: fixed; inset: 0; width: 100%; height: 100%;
+      z-index: 55; pointer-events: none;
+      opacity: 0; transition: opacity .25s ease;
+    }
+    .bubble-connector-svg.open { opacity: 1; }
+    .bubble-connector-svg path {
+      fill: none;
+      stroke: url(#bubbleStroke);
+      stroke-width: 2.5;
+      stroke-linecap: round;
+      filter: drop-shadow(0 0 6px rgba(16,185,129,.5));
+    }
+    .bubble-connector-svg .tube-fill {
+      fill: url(#tubeFill);
+      opacity: 0.22;
+      stroke: none;
+      filter: blur(0.5px);
+    }
+
+    /* ── 中间栏 ── */
+    .list-col {
+      position: relative; display: flex; flex-direction: column;
+      min-width: 0; min-height: 0;
+      background: var(--list-bg); border-right: 1px solid var(--border);
+    }
+    .list-col-header {
+      flex: 0 0 var(--header-h); display: flex; align-items: center;
+      padding: 0 12px; border-bottom: 1px solid var(--border);
+    }
+    .list-col-header input {
+      width: 100%; height: 32px; border: none; border-radius: 6px;
+      background: #222328; color: var(--text); padding: 0 10px; font-size: 13px;
+    }
+    .list-scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+    .list-item { display: flex; gap: 10px; padding: 12px; border-bottom: 1px solid #222328; }
+    .list-item.active { background: #222328; }
+    .avatar { width: 40px; height: 40px; border-radius: 8px; background: #374151; flex-shrink: 0; }
+    .list-name { font-size: 14px; font-weight: 500; }
+    .list-preview { font-size: 12px; color: var(--muted); max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .resize-handle {
+      position: absolute; top: 0; right: -3px; width: 6px; height: 100%;
+      cursor: col-resize; z-index: 10;
+    }
+    .resize-handle:hover { background: rgba(16,185,129,.3); }
+
+    .ai-scrim {
+      position: absolute; inset: 0; z-index: 20;
+      background: rgba(10,12,14,.38);
+      backdrop-filter: blur(8px);
+      opacity: 0; pointer-events: none; transition: opacity .22s ease;
+    }
+    .ai-scrim.open { opacity: 1; pointer-events: auto; }
+
+    .ai-panel {
+      position: absolute; z-index: 25;
+      left: var(--panel-inset); right: var(--panel-inset);
+      top: var(--panel-inset); bottom: var(--panel-inset);
+      border-radius: 16px;
+      box-shadow: 0 20px 60px rgba(0,0,0,.45), 0 0 48px rgba(16,185,129,.08);
+      opacity: 0; transform: translateY(8px) scale(.98);
+      pointer-events: none;
+      transition: opacity .26s ease, transform .26s cubic-bezier(.2,.8,.2,1);
+    }
+    .ai-panel.open { opacity: 1; transform: none; pointer-events: auto; }
+
+    .ai-panel-head {
+      flex: 0 0 auto; display: flex; align-items: center; gap: 8px;
+      padding: 11px 14px; border-bottom: 1px solid rgba(255,255,255,.06);
+    }
+    .ai-panel-head h2 { flex: 1; margin: 0; font-size: 14px; font-weight: 600; }
+    .icon-btn {
+      width: 30px; height: 30px; border: none; border-radius: 8px;
+      background: transparent; color: var(--muted); cursor: pointer; font-size: 15px;
+    }
+    .icon-btn:hover { background: rgba(255,255,255,.06); color: var(--text); }
+
+    .ai-body { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+    .ai-chat {
+      flex: 1 1 auto; min-height: 0; overflow-y: auto;
+      padding: 12px 14px; font-size: 13px; line-height: 1.55;
+    }
+    .ai-hint { text-align: center; color: var(--muted); font-size: 12px; padding: 20px 8px; }
+    .ai-msg {
+      background: rgba(35,36,40,.65); border: 1px solid rgba(255,255,255,.06);
+      border-radius: 10px; padding: 10px 12px; margin-bottom: 10px;
+    }
+    .ai-msg-label { font-size: 11px; color: var(--muted); margin-bottom: 4px; }
+    .cite-card {
+      display: block; width: 100%; margin-top: 8px; padding: 8px 10px;
+      border-radius: 8px; border: 1px solid rgba(16,185,129,.25);
+      background: rgba(16,185,129,.08); color: #a7f3d0;
+      font-size: 12px; text-align: left; cursor: pointer;
+    }
+    .cite-card:hover { background: rgba(16,185,129,.16); box-shadow: 0 0 16px rgba(16,185,129,.12); }
+
+    .ai-foot {
+      flex: 0 0 auto; padding: 8px 12px 10px;
+      border-top: 1px solid rgba(255,255,255,.05);
+    }
+    .ai-foot input {
+      width: 100%; height: 36px; margin-bottom: 6px;
+      border: 1px solid rgba(255,255,255,.08); border-radius: 10px;
+      background: rgba(8,10,12,.45); color: var(--text); padding: 0 10px; font-size: 13px;
+    }
+    .ai-foot input:focus {
+      outline: none; border-color: rgba(16,185,129,.35);
+      box-shadow: 0 0 0 3px rgba(16,185,129,.1);
+    }
+
+    /* 低调模式切换 */
+    .mode-switch {
+      display: inline-flex; align-items: center; position: relative;
+      height: 22px; padding: 2px; border-radius: 999px;
+      background: rgba(255,255,255,.04);
+      border: 1px solid rgba(255,255,255,.06);
+    }
+    .mode-switch-btn {
+      position: relative; z-index: 2;
+      height: 18px; padding: 0 10px; border: none; border-radius: 999px;
+      background: transparent; color: rgba(139,143,152,.85);
+      font-size: 10px; letter-spacing: 0.02em; cursor: pointer;
+      transition: color .18s ease;
+    }
+    .mode-switch-btn.active { color: rgba(232,234,237,.92); }
+    .mode-switch-thumb {
+      position: absolute; z-index: 1; top: 2px; left: 2px;
+      width: calc(50% - 2px); height: 18px; border-radius: 999px;
+      background: rgba(16,185,129,.22);
+      border: 1px solid rgba(110,231,183,.2);
+      box-shadow: 0 0 10px rgba(16,185,129,.15);
+      transition: transform .22s cubic-bezier(.2,.8,.2,1);
+    }
+    .mode-switch[data-mode="search"] .mode-switch-thumb { transform: translateX(100%); }
+    .mode-switch-wrap { display: flex; justify-content: center; }
+
+    .search-list { flex: 1; min-height: 0; overflow-y: auto; padding: 12px 14px; }
+    .search-list input {
+      width: 100%; height: 36px; margin-bottom: 10px;
+      border: 1px solid rgba(255,255,255,.08); border-radius: 10px;
+      background: rgba(8,10,12,.45); color: var(--text); padding: 0 10px; font-size: 13px;
+    }
+
+    /* ── 右侧聊天 ── */
+    .chat-col {
+      position: relative;
+      display: flex; flex-direction: column;
+      min-width: 0; min-height: 0; background: var(--bg);
+    }
+    .chat-head {
+      flex: 0 0 var(--header-h); display: flex; align-items: center; justify-content: space-between;
+      padding: 0 16px; border-bottom: 1px solid var(--border);
+      background: var(--list-bg); font-size: 14px;
+    }
+    .chat-head-sub { font-size: 12px; color: var(--muted); }
+    .chat-body-wrap {
+      flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column;
+    }
+    .messages { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 16px; }
+    .time-divider { text-align: center; font-size: 12px; color: #666; margin: 8px 0 16px; }
+    .bubble { max-width: 72%; padding: 10px 12px; border-radius: 8px; font-size: 14px; line-height: 1.5; margin-bottom: 12px; }
+    .bubble.other { background: #232428; border: 1px solid #2f3036; }
+    .bubble.self { margin-left: auto; background: #264a3d; }
+
+    .compose {
+      flex: 0 0 var(--compose-h); border-top: 1px solid var(--border);
+      background: var(--list-bg); padding: 8px 12px; z-index: 40; position: relative;
+    }
+    .compose-note { font-size: 11px; color: #666; margin-bottom: 6px; }
+    .compose textarea {
+      width: 100%; height: 56px; resize: none; border: none;
+      background: transparent; color: var(--text); font-size: 14px; outline: none;
+    }
+    .compose-send { display: flex; justify-content: flex-end; margin-top: 4px; }
+    .compose-send button {
+      height: 32px; padding: 0 14px; border: none; border-radius: 6px;
+      background: #059669; color: #fff; font-size: 13px; cursor: pointer;
+    }
+
+    /* Expand：顶与中间栏 AI 气泡齐平，盖住 chat-head */
+    .expand-layer {
+      position: absolute;
+      left: var(--panel-inset); right: var(--panel-inset);
+      top: var(--panel-inset); bottom: var(--compose-h);
+      z-index: 35; pointer-events: none;
+    }
+    .expand-scrim {
+      position: absolute; inset: 0;
+      background: rgba(8,10,12,.48);
+      backdrop-filter: blur(10px);
+      opacity: 0; transition: opacity .22s;
+    }
+    .expand-scrim.open { opacity: 1; pointer-events: auto; }
+    .expand-panel {
+      position: absolute; inset: 0;
+      border-radius: 16px;
+      box-shadow: 0 20px 60px rgba(0,0,0,.5), 0 0 40px rgba(16,185,129,.06);
+      opacity: 0; transform: translateY(8px) scale(.985);
+      pointer-events: none;
+      transition: all .24s cubic-bezier(.2,.8,.2,1);
+    }
+    .expand-panel.open { opacity: 1; transform: none; pointer-events: auto; }
+    .expand-content {
+      flex: 1; min-height: 0; overflow-y: auto; padding: 16px 20px;
+      font-size: 14px; line-height: 1.65;
+    }
+    .expand-content h1 { font-size: 18px; margin: 0 0 12px; }
+    .expand-content pre {
+      margin-top: 16px; padding: 10px; border-radius: 8px;
+      background: #111; font-size: 12px; color: #aaa;
+    }
+
+    .legend {
+      position: fixed; top: 12px; right: 12px; z-index: 100;
+      max-width: 280px; padding: 10px 12px; border-radius: 10px;
+      border: 1px solid rgba(255,255,255,.08);
+      background: rgba(0,0,0,.72); backdrop-filter: blur(8px);
+      font-size: 11px; line-height: 1.5; color: #aaa;
+    }
+    .legend strong { color: #6ee7b7; font-size: 12px; }
+    .legend kbd { font-size: 9px; padding: 1px 4px; border-radius: 3px; background: #333; border: 1px solid #444; }
+
+    .hidden { display: none !important; }
+  </style>
+</head>
+<body>
+  <svg class="bubble-connector-svg open" id="bubbleSvg" aria-hidden="true">
+    <defs>
+      <linearGradient id="bubbleStroke" x1="0%" y1="0%" x2="100%" y2="0%">
+        <stop offset="0%" stop-color="rgba(110,231,183,.85)" />
+        <stop offset="100%" stop-color="rgba(52,211,153,.45)" />
+      </linearGradient>
+      <linearGradient id="tubeFill" x1="0%" y1="0%" x2="100%" y2="0%">
+        <stop offset="0%" stop-color="rgba(16,185,129,.35)" />
+        <stop offset="100%" stop-color="rgba(16,185,129,.05)" />
+      </linearGradient>
+    </defs>
+    <path id="bubbleTube" class="tube-fill" d="" />
+    <path id="bubblePath" d="" />
+  </svg>
+
+  <div class="shell" id="shell">
+    <nav class="nav">
+      <div class="nav-logo">C</div>
+      <div class="nav-spacer"></div>
+      <button type="button" class="nav-btn" title="主题">☀</button>
+      <button type="button" class="nav-btn" title="设置">⚙</button>
+      <div class="ai-trigger-wrap open" id="aiTriggerWrap">
+        <div class="ai-trigger-bubble liquid-glass" aria-hidden="true">
+          <div class="glass-aurora"></div>
+          <div class="glass-glow"></div>
+          <div class="glass-rim"></div>
+        </div>
+        <button type="button" id="btnSparkles" class="nav-btn sparkles" title="AI 辅助">✦</button>
+      </div>
+    </nav>
+
+    <section class="list-col" id="listCol">
+      <div class="list-col-header">
+        <input type="text" placeholder="搜索会话" />
+      </div>
+      <div class="list-scroll">
+        <div class="list-item active">
+          <div class="avatar"></div>
+          <div>
+            <div class="list-name">张先生 · 售后</div>
+            <div class="list-preview">发票什么时候能开？</div>
+          </div>
+        </div>
+        <div class="list-item">
+          <div class="avatar"></div>
+          <div><div class="list-name">李女士</div><div class="list-preview">[图片]</div></div>
+        </div>
+        <div class="list-item">
+          <div class="avatar"></div>
+          <div><div class="list-name">运维群</div><div class="list-preview">@所有人 今晚维护</div></div>
+        </div>
+      </div>
+      <div class="resize-handle" id="resizeHandle"></div>
+
+      <div class="ai-scrim open" id="scrimList"></div>
+      <div class="ai-panel liquid-glass open" id="panelList">
+        <div class="glass-aurora"></div>
+        <div class="glass-glow"></div>
+        <div class="glass-rim"></div>
+        <div class="glass-content">
+          <header class="ai-panel-head">
+            <span style="color:#6ee7b7;text-shadow:0 0 10px rgba(52,211,153,.6)">✦</span>
+            <h2 id="panelTitle">AI 辅助</h2>
+            <button type="button" class="icon-btn" id="btnClosePanel">✕</button>
+          </header>
+
+          <div id="viewAssist" class="ai-body">
+            <div class="ai-chat" id="chatArea">
+              <div class="ai-hint">基于 Wiki 提问，辅助人工回复</div>
+              <div class="ai-msg">
+                <div class="ai-msg-label">AI</div>
+                <div>根据 Wiki，开票周期一般为 3–5 个工作日。引用：</div>
+                <button type="button" class="cite-card" data-title="电子发票开具说明">📄 wiki/faq/invoice.md</button>
+              </div>
+            </div>
+            <footer class="ai-foot">
+              <input id="assistInput" type="text" placeholder="向 Wiki 提问…" />
+              <div class="mode-switch-wrap">
+                <div class="mode-switch" id="modeSwitch" data-mode="assist" role="tablist">
+                  <span class="mode-switch-thumb"></span>
+                  <button type="button" class="mode-switch-btn active" data-mode="assist">辅助</button>
+                  <button type="button" class="mode-switch-btn" data-mode="search">搜索</button>
+                </div>
+              </div>
+            </footer>
+          </div>
+
+          <div id="viewSearch" class="ai-body hidden">
+            <div class="search-list">
+              <input type="text" placeholder="搜索 Wiki 词条…" />
+              <button type="button" class="cite-card" data-title="退款政策">wiki/policy/refund.md</button>
+              <button type="button" class="cite-card" style="margin-top:8px" data-title="售后 SLA">wiki/ops/sla.md</button>
+            </div>
+            <footer class="ai-foot">
+              <div class="mode-switch-wrap">
+                <div class="mode-switch" data-mode="search" role="tablist">
+                  <span class="mode-switch-thumb"></span>
+                  <button type="button" class="mode-switch-btn" data-mode="assist">辅助</button>
+                  <button type="button" class="mode-switch-btn active" data-mode="search">搜索</button>
+                </div>
+              </div>
+            </footer>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <main class="chat-col" id="chatCol">
+      <header class="chat-head" id="chatHead">
+        <span>张先生 · 售后</span>
+        <span class="chat-head-sub">Agent 已暂停 · 人工回复</span>
+      </header>
+
+      <div class="chat-body-wrap">
+        <div class="messages">
+          <div class="time-divider">星期二 14:30</div>
+          <div class="bubble other">发票什么时候能开？我上周已经提交了。</div>
+          <div class="bubble self">您好，我帮您查一下 Wiki 里的标准口径。</div>
+        </div>
+      </div>
+
+      <footer class="compose">
+        <div class="compose-note">输入框 — <strong>展开层不覆盖此处</strong></div>
+        <textarea placeholder="输入消息…"></textarea>
+        <div class="compose-send"><button type="button">发送</button></div>
+      </footer>
+
+      <!-- expand 在 chat-col 层，顶对齐 AI 面板 -->
+      <div class="expand-layer">
+        <div class="expand-scrim" id="scrimExpand"></div>
+        <div class="expand-panel liquid-glass" id="expandPanel">
+          <div class="glass-aurora"></div>
+          <div class="glass-glow"></div>
+          <div class="glass-rim"></div>
+          <div class="glass-content">
+            <header class="ai-panel-head">
+              <button type="button" class="icon-btn" id="btnCloseExpand">←</button>
+              <h2 id="expandTitle" style="flex:1;margin:0;font-size:14px">Wiki 详情</h2>
+            </header>
+            <div class="expand-content">
+              <h1 id="expandH1">电子发票开具说明</h1>
+              <p>企业用户提交开票申请后，财务将在 <strong>3–5 个工作日</strong> 内开具电子发票并发送至预留邮箱。</p>
+              <p>若超过 7 个工作日未收到，请联系运维并提供订单号。</p>
+              <pre>路径: wiki/faq/invoice.md</pre>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <aside class="legend">
+    <strong>AI 辅助 v2</strong><br />
+    泡泡包裹 ✦ 并连到面板 · 液态玻璃自发光<br />
+    展开层顶对齐中间栏气泡 · 低调模式切换<br />
+    <kbd>1</kbd> 面板 · <kbd>2</kbd> 模式 · 点引用看展开
+  </aside>
+
+  <script>
+    const state = { panel: true, expand: false, mode: "assist" }
+
+    function setPanel(open) {
+      state.panel = open
+      document.getElementById("scrimList").classList.toggle("open", open)
+      document.getElementById("panelList").classList.toggle("open", open)
+      document.getElementById("bubbleSvg").classList.toggle("open", open)
+      document.getElementById("aiTriggerWrap").classList.toggle("open", open)
+      if (!open) setExpand(false)
+      requestAnimationFrame(updateBubbleConnector)
+    }
+
+    function setExpand(open, title) {
+      state.expand = open
+      document.getElementById("scrimExpand").classList.toggle("open", open)
+      document.getElementById("expandPanel").classList.toggle("open", open)
+      if (title) {
+        document.getElementById("expandTitle").textContent = title
+        document.getElementById("expandH1").textContent = title
+      }
+    }
+
+    function setMode(mode) {
+      state.mode = mode
+      const assist = mode === "assist"
+      document.getElementById("viewAssist").classList.toggle("hidden", !assist)
+      document.getElementById("viewSearch").classList.toggle("hidden", assist)
+      document.getElementById("panelTitle").textContent = assist ? "AI 辅助" : "Wiki 搜索"
+      document.querySelectorAll(".mode-switch").forEach((el) => {
+        el.dataset.mode = mode
+        el.querySelectorAll(".mode-switch-btn").forEach((btn) => {
+          btn.classList.toggle("active", btn.dataset.mode === mode)
+        })
+      })
+    }
+
+    function toggleMode() {
+      setMode(state.mode === "assist" ? "search" : "assist")
+    }
+
+    /** 从 nav 泡泡连到 AI 面板左下 — 贝塞尔 + 粗管填充 */
+    function updateBubbleConnector() {
+      if (!state.panel) return
+      const wrap = document.getElementById("aiTriggerWrap")
+      const panel = document.getElementById("panelList")
+      const wr = wrap.getBoundingClientRect()
+      const pr = panel.getBoundingClientRect()
+
+      const x0 = wr.right - 4
+      const y0 = wr.top + wr.height * 0.52
+      const x1 = pr.left + 14
+      const y1 = pr.bottom - 18
+      const cx1 = x0 + (x1 - x0) * 0.35
+      const cy1 = y0 - 28
+      const cx2 = x0 + (x1 - x0) * 0.72
+      const cy2 = y1 + 16
+
+      const line = `M ${x0} ${y0} C ${cx1} ${cy1}, ${cx2} ${cy2}, ${x1} ${y1}`
+      document.getElementById("bubblePath").setAttribute("d", line)
+
+      // 粗管：线两侧 offset（简化用宽 stroke 的 fill 路径）
+      const nx = -(y1 - y0)
+      const ny = (x1 - x0)
+      const len = Math.hypot(nx, ny) || 1
+      const ox = (nx / len) * 5
+      const oy = (ny / len) * 5
+      const tube = `${line} L ${x1 + ox} ${y1 + oy} C ${cx2 + ox} ${cy2 + oy}, ${cx1 + ox} ${cy1 + oy}, ${x0 + ox} ${y0 + oy} Z`
+      document.getElementById("bubbleTube").setAttribute("d", tube)
+    }
+
+    document.getElementById("btnSparkles").onclick = () => setPanel(!state.panel)
+    document.getElementById("btnClosePanel").onclick = () => setPanel(false)
+    document.getElementById("scrimList").onclick = (e) => {
+      if (e.target.id === "scrimList") setPanel(false)
+    }
+    document.getElementById("btnCloseExpand").onclick = () => setExpand(false)
+    document.getElementById("scrimExpand").onclick = (e) => {
+      if (e.target.id === "scrimExpand") setExpand(false)
+    }
+
+    document.querySelectorAll(".mode-switch").forEach((sw) => {
+      sw.querySelectorAll(".mode-switch-btn").forEach((btn) => {
+        btn.onclick = () => setMode(btn.dataset.mode)
+      })
+      sw.onclick = (e) => {
+        if (e.target.classList.contains("mode-switch-btn")) return
+        toggleMode()
+      }
+    })
+
+    document.querySelectorAll(".cite-card").forEach((card) => {
+      card.onclick = () => setExpand(true, card.dataset.title || "Wiki")
+    })
+
+    document.getElementById("assistInput").addEventListener("keydown", (e) => {
+      if (e.key !== "Enter") return
+      e.preventDefault()
+      const text = e.target.value.trim()
+      if (!text) return
+      const area = document.getElementById("chatArea")
+      const div = document.createElement("div")
+      div.className = "ai-msg"
+      div.style.background = "rgba(38,74,61,.75)"
+      div.style.border = "none"
+      div.textContent = text
+      area.appendChild(div)
+      e.target.value = ""
+      area.scrollTop = area.scrollHeight
+    })
+
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "1") setPanel(!state.panel)
+      if (e.key === "2") toggleMode()
+      if (e.key === "Escape") {
+        if (state.expand) setExpand(false)
+        else if (state.panel) setPanel(false)
+      }
+    })
+
+    let dragging = false
+    const handle = document.getElementById("resizeHandle")
+    handle.addEventListener("pointerdown", (e) => {
+      dragging = true
+      handle.setPointerCapture(e.pointerId)
+    })
+    handle.addEventListener("pointermove", (e) => {
+      if (!dragging) return
+      const shell = document.getElementById("shell").getBoundingClientRect()
+      const w = Math.min(420, Math.max(200, e.clientX - shell.left - 72))
+      document.documentElement.style.setProperty("--list-w", w + "px")
+      updateBubbleConnector()
+    })
+    handle.addEventListener("pointerup", () => { dragging = false })
+
+    window.addEventListener("resize", updateBubbleConnector)
+    setPanel(true)
+    setMode("assist")
+    requestAnimationFrame(updateBubbleConnector)
+  </script>
+</body>
+</html>

@@ -10,3 +10,5 @@ pub mod wechat_keys;
 pub mod wechat_messages;
 pub mod wechat_media;
 pub mod wechat_artifacts;
+pub mod avatar_proxy;
+pub mod client_msg_registry;

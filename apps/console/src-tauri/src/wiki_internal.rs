@@ -26,6 +26,7 @@ pub fn handle_upstream(method: &str, params: Value) -> (Value, Option<String>) {
                 args.query,
                 args.top_k,
                 args.include_content,
+                None,
             )) {
                 Ok(results) => (json!(results), None),
                 Err(err) => (Value::Null, Some(err)),

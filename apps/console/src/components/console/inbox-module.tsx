@@ -1,12 +1,10 @@
-import { useEffect, useState } from "react"
-import { RefreshCw } from "lucide-react"
+import { useEffect } from "react"
 import { useTranslation } from "react-i18next"
 import { Button } from "@/components/ui/button"
-import {
-  InboxChatShell,
-  type InboxListFilter,
-} from "@/components/console/inbox-chat-shell"
+import { InboxChatShell } from "@/components/console/inbox-chat-shell"
 import { useDriverInbox } from "@/hooks/use-driver-inbox"
+import { useDriverEvents } from "@/hooks/use-driver-events"
+import { useAgentProxy } from "@/hooks/use-agent-proxy"
 import { useInboxMutes } from "@/hooks/use-inbox-mutes"
 import { useInboxSessionContext } from "@/hooks/use-inbox-session-context"
 import { StatusBadge } from "@/components/console/status-badge"
@@ -15,23 +13,20 @@ import {
   useStackHealth,
 } from "@/hooks/use-stack-health"
 import { useConsoleStore } from "@/stores/console-store"
+import { useAiAssistStore } from "@/stores/ai-assist-store"
 import { useToastStore } from "@/stores/toast-store"
+import { runStackOrchestrator } from "@/lib/stack-orchestrator"
+import { useComposeHeightVar } from "@/hooks/use-compose-height-var"
 
 type InboxGate =
   | { kind: "loading" }
   | { kind: "driver_down" }
-  | { kind: "driver_unreachable" }
-  | { kind: "wechat_not_logged_in" }
   | { kind: "wechat_db_not_ready" }
   | { kind: "ready" }
 
 function resolveInboxGate(health: ReturnType<typeof useStackHealth>): InboxGate {
   if (health.loading) return { kind: "loading" }
-  if (health.driver === "down") return { kind: "driver_down" }
-  if (health.driver === "degraded" || health.driver === "unknown") {
-    return { kind: "driver_unreachable" }
-  }
-  if (!health.wechatLoggedIn) return { kind: "wechat_not_logged_in" }
+  if (health.driver !== "up") return { kind: "driver_down" }
   if (!health.chatsReady) return { kind: "wechat_db_not_ready" }
   return { kind: "ready" }
 }
@@ -40,13 +35,9 @@ export function InboxModule() {
   const { t } = useTranslation()
   const addToast = useToastStore((s) => s.addToast)
   const health = useStackHealth()
-  const navigateSystem = useConsoleStore((s) => s.navigateSystem)
   const navigateSystemWechat = useConsoleStore((s) => s.navigateSystemWechat)
   const consumePendingWeChatChatId = useConsoleStore(
     (s) => s.consumePendingWeChatChatId,
-  )
-  const consumePendingInboxFilter = useConsoleStore(
-    (s) => s.consumePendingInboxFilter,
   )
 
   const gate = resolveInboxGate(health)
@@ -66,25 +57,26 @@ export function InboxModule() {
     inbox.allChats.length === 0 &&
     health.wechatLoggedIn
   const {
-    mutes,
     muteByChatId,
-    busyChatId,
-    batchBusy,
-    refreshMutes,
     unmuteChat,
+    muteChat,
     markChatDone,
-    markAllDone,
   } = useInboxMutes()
-  const pendingFilter = consumePendingInboxFilter()
-  const [listFilter, setListFilter] = useState<InboxListFilter>(
-    pendingFilter ?? "all",
-  )
+
+  const { openChatById, selectedChat, messages } = inbox
 
   useEffect(() => {
-    if (pendingFilter) setListFilter(pendingFilter)
-  }, [pendingFilter])
+    useAiAssistStore.getState().onInboxChatChanged(selectedChat?.id ?? null)
+  }, [selectedChat?.id])
 
-  const { chats, selectChatById, selectedChat, messages } = inbox
+  const activeWechatTab = useConsoleStore((s) => s.activeWechatTab)
+  useEffect(() => {
+    if (activeWechatTab !== "chats") {
+      useAiAssistStore.getState().close()
+    }
+  }, [activeWechatTab])
+
+  useComposeHeightVar(gate.kind === "ready" && !!selectedChat)
   const selectedMute = selectedChat
     ? muteByChatId.get(selectedChat.id) ?? null
     : null
@@ -93,29 +85,33 @@ export function InboxModule() {
     selectedMute,
     messages,
   )
+  const agentProxy = useAgentProxy(selectedChat?.id ?? null)
+
+  useDriverEvents({
+    enabled: gate.kind === "ready",
+    selectedChatId: selectedChat?.id ?? null,
+    onChatsChanged: () => {
+      void inbox.refreshChats({ silent: true })
+    },
+    onSelectedChatActivity: (chatId) => {
+      void inbox.refreshMessages(chatId)
+    },
+  })
 
   useEffect(() => {
-    if (chats.length === 0) return
+    if (gate.kind !== "ready") return
     const chatId = consumePendingWeChatChatId()
-    if (chatId) selectChatById(chatId)
-  }, [chats, consumePendingWeChatChatId, selectChatById])
-
-  const handleRefresh = () => {
-    void inbox.refreshChats()
-    void refreshMutes()
-    if (inbox.selectedChat) {
-      void inbox.refreshMessages(inbox.selectedChat.id)
-    }
-  }
+    if (chatId) void openChatById(chatId)
+  }, [gate.kind, consumePendingWeChatChatId, openChatById])
 
   async function handleUnmute(chatId: string) {
     try {
       const changed = await unmuteChat(chatId)
       if (changed) {
-        addToast(t("console.inbox.unmuteSuccess"), "success")
+        addToast(t("wechat.inbox.unmuteSuccess"), "success")
         void session.reload()
       } else {
-        addToast(t("console.inbox.unmuteNoop"), "info")
+        addToast(t("wechat.inbox.unmuteNoop"), "info")
       }
     } catch (err) {
       addToast(
@@ -129,10 +125,10 @@ export function InboxModule() {
     try {
       const changed = await markChatDone(chatId)
       if (changed) {
-        addToast(t("console.inbox.markDoneSuccess"), "success")
+        addToast(t("wechat.inbox.markDoneSuccess"), "success")
         void session.reload()
       } else {
-        addToast(t("console.inbox.unmuteNoop"), "info")
+        addToast(t("wechat.inbox.unmuteNoop"), "info")
       }
     } catch (err) {
       addToast(
@@ -142,14 +138,28 @@ export function InboxModule() {
     }
   }
 
-  async function handleMarkAllDone() {
-    if (mutes.length === 0) return
+  async function handleMarkTodo(chatId: string, chatName: string) {
     try {
-      const count = await markAllDone()
+      const changed = await muteChat(chatId, chatName, "escalate_a")
+      if (changed) {
+        addToast(t("wechat.inbox.contextMarkTodoSuccess"), "success")
+        void session.reload()
+      }
+    } catch (err) {
       addToast(
-        t("console.inbox.markAllDoneSuccess", { count }),
-        count > 0 ? "success" : "info",
+        err instanceof Error ? err.message : String(err),
+        "error",
       )
+    }
+  }
+
+  async function handleMute(chatId: string, chatName: string) {
+    try {
+      const changed = await muteChat(chatId, chatName, "manual")
+      if (changed) {
+        addToast(t("wechat.inbox.contextMuteSuccess"), "success")
+        void session.reload()
+      }
     } catch (err) {
       addToast(
         err instanceof Error ? err.message : String(err),
@@ -160,84 +170,42 @@ export function InboxModule() {
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 px-6 pb-3 pt-6">
-        <div>
-          <h1 className="text-xl font-semibold">{t("console.inbox.title")}</h1>
-          <p className="text-sm text-muted-foreground">
-            {t("console.inbox.subtitle")}
-          </p>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          {mutes.length > 0 && (
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={batchBusy}
-              onClick={() => void handleMarkAllDone()}
-            >
-              {t("console.inbox.markAllDone")}
-            </Button>
-          )}
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={handleRefresh}
-            disabled={inbox.loading || batchBusy}
-          >
-            <RefreshCw
-              className={`mr-2 h-4 w-4 ${inbox.loading ? "animate-spin" : ""}`}
-            />
-            {t("console.refresh")}
-          </Button>
-        </div>
-      </div>
-
-      <div className="flex min-h-0 flex-1 flex-col px-6 pb-4">
+      <div className="flex min-h-0 flex-1 flex-col">
         {gate.kind !== "ready" ? (
-          <div className="flex flex-1 flex-col items-center justify-center gap-4 rounded-md border bg-muted/20 px-6 py-10 text-center">
+          <div className="flex flex-1 flex-col items-center justify-center gap-4 px-6 py-10 text-center">
             <div className="flex flex-wrap items-center justify-center gap-2">
               <StatusBadge label="Driver" health={health.driver} />
               <StatusBadge label="WeChat" health={wechatHealth} />
             </div>
             {gate.kind === "loading" ? (
               <p className="text-sm text-muted-foreground">
-                {t("console.inbox.checkingServices")}
+                {t("wechat.inbox.checkingServices")}
               </p>
             ) : (
               <>
                 <p className="max-w-md text-sm text-muted-foreground">
                   {gate.kind === "driver_down" &&
-                    t("console.inbox.chatsDriverDown")}
-                  {gate.kind === "driver_unreachable" &&
-                    t("console.inbox.chatsDriverUnreachable")}
-                  {gate.kind === "wechat_not_logged_in" &&
-                    t("console.inbox.chatsWechatNotLoggedIn")}
+                    t("wechat.inbox.chatsDriverDown")}
                   {gate.kind === "wechat_db_not_ready" &&
-                    t("console.inbox.chatsDbNotReady")}
+                    t("wechat.inbox.chatsDbNotReady")}
                 </p>
                 <Button
                   size="sm"
                   onClick={() => {
-                    if (
-                      gate.kind === "driver_down" ||
-                      gate.kind === "driver_unreachable"
-                    ) {
-                      navigateSystem("services", "driver")
-                    } else if (gate.kind === "wechat_db_not_ready") {
+                    if (gate.kind === "driver_down") {
+                      void runStackOrchestrator("start", () => {}).then(() =>
+                        refreshStackHealth(),
+                      )
+                    } else {
                       void refreshStackHealth()
                       navigateSystemWechat(true)
-                    } else {
-                      navigateSystemWechat()
                     }
                   }}
                 >
-                  {gate.kind === "wechat_not_logged_in" &&
-                    t("console.inbox.openWechatLogin")}
                   {gate.kind === "wechat_db_not_ready" &&
-                    t("console.inbox.syncWechatDb")}
-                  {(gate.kind === "driver_down" ||
-                    gate.kind === "driver_unreachable") &&
-                    t("console.inbox.openDriverServices")}
+                    t("wechat.inbox.syncWechatDb")}
+                  {gate.kind === "driver_down" &&
+                    t("wechat.inbox.openDriverServices")}
                 </Button>
               </>
             )}
@@ -247,24 +215,43 @@ export function InboxModule() {
             chats={inbox.chats}
             chatsLoading={inbox.loading}
             messageHits={inbox.messageHits}
+            messageHitsLoading={inbox.messageHitsLoading}
             selectedChat={inbox.selectedChat}
             messages={inbox.messages}
             messagesLoading={inbox.messagesLoading}
             listQuery={inbox.listQuery}
             onListQueryChange={inbox.setListQuery}
-            messageQuery={inbox.messageQuery}
-            onMessageQueryChange={inbox.setMessageQuery}
-            onSelectChat={(c) => void inbox.loadMessages(c)}
-            listFilter={listFilter}
-            onListFilterChange={setListFilter}
+            onSelectChat={(c) => void inbox.selectChat(c)}
+            onJumpToMessage={(chat, localId) =>
+              void inbox.jumpToMessage(chat, localId)
+            }
+            onReturnToLatest={() => void inbox.returnToLatest()}
+            pendingScrollLocalId={inbox.pendingScrollLocalId}
+            scrollRestoreTop={inbox.scrollRestoreTop}
+            onCaptureScrollMemory={inbox.captureScrollMemory}
+            onScrollRestoreApplied={inbox.clearScrollRestore}
+            onClearPendingScroll={inbox.clearPendingScroll}
+            messageViewMode={inbox.messageViewMode}
+            loadingNewer={inbox.loadingNewer}
+            hasMoreNewer={inbox.hasMoreNewer}
+            onLoadNewerMessages={inbox.loadNewerMessages}
             muteByChatId={muteByChatId}
-            todoCount={mutes.length}
-            muteBusyChatId={busyChatId}
             onUnmuteChat={(id) => void handleUnmute(id)}
             onMarkChatDone={(id) => void handleMarkDone(id)}
-            session={session}
+            onMarkTodoChat={(id, name) => void handleMarkTodo(id, name)}
+            onMuteChat={(id, name) => void handleMute(id, name)}
+            agentProxy={agentProxy}
+            onRefreshMessages={(chatId) => void inbox.onMessageSent(chatId)}
+            onBeforeSend={(chatId, text) => inbox.appendOptimisticSend(chatId, text)}
+            onSendFailed={(chatId, clientMsgId) =>
+              inbox.revertOptimisticSend(chatId, clientMsgId)
+            }
+            loadingOlder={inbox.loadingOlder}
+            hasMoreOlder={inbox.hasMoreOlder}
+            onLoadOlderMessages={inbox.loadOlderMessages}
+            onComposeError={(msg) => addToast(msg, "error")}
             emptyListHint={
-              chatsLoadFailed ? t("console.inbox.chatsDbNotReady") : undefined
+              chatsLoadFailed ? t("wechat.inbox.chatsDbNotReady") : undefined
             }
             onEmptyListAction={
               chatsLoadFailed
@@ -275,12 +262,12 @@ export function InboxModule() {
                 : undefined
             }
             emptyListActionLabel={
-              chatsLoadFailed ? t("console.inbox.syncWechatDb") : undefined
+              chatsLoadFailed ? t("wechat.inbox.syncWechatDb") : undefined
             }
           />
         )}
         {inbox.error && (
-          <p className="mt-2 text-sm text-destructive">{inbox.error}</p>
+          <p className="px-4 py-2 text-sm text-destructive">{inbox.error}</p>
         )}
       </div>
     </div>

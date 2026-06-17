@@ -5,7 +5,7 @@ import {
   chatDirPath,
   encodeChatDir,
   ensureChatsRoot,
-  WIKI_DEFAULT_PATH,
+  wikiDefaultPath,
 } from "./paths.js";
 import { initChatStyle, loadChatStyle, type ChatStyle } from "./style.js";
 
@@ -35,9 +35,10 @@ export type ChatContext = {
 };
 
 function defaultWikiConfig(): ChatWikiConfig {
-  if (existsSync(WIKI_DEFAULT_PATH)) {
+  const wikiDefault = wikiDefaultPath();
+  if (existsSync(wikiDefault)) {
     try {
-      const raw = JSON.parse(readFileSync(WIKI_DEFAULT_PATH, "utf8")) as {
+      const raw = JSON.parse(readFileSync(wikiDefault, "utf8")) as {
         projects?: unknown;
       };
       if (Array.isArray(raw.projects)) {

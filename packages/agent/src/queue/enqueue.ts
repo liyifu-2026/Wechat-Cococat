@@ -2,6 +2,7 @@ import type { NewMessagesChatInfo, WeChatClient } from "@cococat/shared";
 import { ensureChatContext } from "../chat-store.js";
 import { SeenStore } from "../seen.js";
 import { addPendingLocalIds } from "./pending.js";
+import { filterUnseenLocalIds } from "./snapshot-guard.js";
 import { getInboundQueue, type InboundJobData } from "./queues.js";
 import { getRedisConnection } from "./redis.js";
 
@@ -27,7 +28,11 @@ export async function enqueueChatInbound(
 ): Promise<void> {
   if (!chat.chatId) return;
 
-  const localIds = await collectUnseenLocalIds(client, chat.chatId);
+  let localIds = await collectUnseenLocalIds(client, chat.chatId);
+  if (localIds.length === 0) return;
+
+  // 与 worker markSeen 竞态：入 pending 前再滤一遍已处理 id
+  localIds = filterUnseenLocalIds(chat.chatId, localIds);
   if (localIds.length === 0) return;
 
   const redis = getRedisConnection();

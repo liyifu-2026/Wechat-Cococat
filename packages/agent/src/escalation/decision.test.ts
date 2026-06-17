@@ -1,16 +1,16 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import {
-  decideCustomerEscalation,
-  decideCustomerEscalationRules,
-} from "./decision.js";
+import { decideCustomerEscalation } from "./decision.js";
 import type { EscalationConfig } from "./types.js";
-import { previewCustomerReply, previewCustomerReplyRules } from "../preview-reply.js";
+import { previewCustomerReply } from "../preview-reply.js";
 
 const cfg: EscalationConfig = {
   enabled: true,
   maintainerChatId: "wxid_maintainer",
   maintainerDisplayName: "维护者",
+  maintainers: [
+    { chatId: "wxid_maintainer", displayName: "维护者" },
+  ],
   notifyEscalate: true,
   notifyProbeLoop: true,
   notifyLowConfidence: false,
@@ -21,39 +21,44 @@ const cfg: EscalationConfig = {
   muteHoursEscalate: 24,
   muteHoursProbeLoop: 2,
   probeStreakThreshold: 2,
+  agentHandoffEnabled: true,
 };
 
 describe("escalation decision", () => {
-  it("rules and async decision agree when LLM disabled", async () => {
-    const text = "我要转人工投诉";
-    const chatState = { deflectSent: false, probeStreak: 0 };
-    const rules = decideCustomerEscalationRules({
-      combinedText: text,
-      chatState,
-      config: cfg,
-    });
+  it("falls back to continue when LLM disabled", async () => {
     const decision = await decideCustomerEscalation({
-      combinedText: text,
-      chatState,
+      combinedText: "我要转人工投诉",
+      chatState: { deflectSent: false, probeStreak: 0 },
       config: cfg,
     });
-    assert.equal(decision.action, rules.action);
-    assert.equal(decision.source, "rules");
+    assert.equal(decision.gate, "continue");
+    assert.equal(decision.executedAction, "CONTINUE_AGENT");
+    assert.equal(decision.action, "reply");
+    assert.equal(decision.source, "fallback");
+    assert.equal(decision.reason, "llm_disabled");
   });
 
-  it("previewCustomerReply matches runtime decision without LLM", async () => {
+  it("empty message is skip NO_REPLY without LLM", async () => {
+    const decision = await decideCustomerEscalation({
+      combinedText: "",
+      chatState: { deflectSent: false, probeStreak: 0 },
+      config: cfg,
+    });
+    assert.equal(decision.gate, "skip");
+    assert.equal(decision.executedAction, "NO_REPLY");
+    assert.equal(decision.source, "fallback");
+  });
+
+  it("previewCustomerReply uses same gate path", async () => {
     const preview = await previewCustomerReply({
       query: "你是不是机器人",
       chatState: { deflectSent: false, probeStreak: 0 },
       config: cfg,
     });
-    const rules = previewCustomerReplyRules({
-      query: "你是不是机器人",
-      chatState: { deflectSent: false, probeStreak: 0 },
-      config: cfg,
-    });
-    assert.equal(preview.action, rules.action);
-    assert.equal(preview.source, "rules");
+    assert.equal(preview.gate, "continue");
+    assert.equal(preview.executedAction, "CONTINUE_AGENT");
+    assert.equal(preview.action, "reply");
+    assert.equal(preview.source, "fallback");
     assert.equal(preview.stealthOk, true);
   });
 });

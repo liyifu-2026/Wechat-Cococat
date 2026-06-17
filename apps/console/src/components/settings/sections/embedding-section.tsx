@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react"
 import { useTranslation } from "react-i18next"
+import { InfoTip } from "@/components/ui/info-tip"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -147,19 +148,12 @@ export function EmbeddingSection({ draft, setDraft }: Props) {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h2 className="text-xl font-semibold">{t("settings.sections.embedding.title")}</h2>
-        <p className="mt-1 text-sm text-muted-foreground">
-          {t("settings.sections.embedding.description")}
-        </p>
-      </div>
+      <h2 className="text-xl font-semibold">{t("settings.sections.embedding.title")}</h2>
 
       <div className="flex items-center justify-between rounded-md border p-3">
-        <div>
+        <div className="flex items-center gap-1.5">
           <div className="text-sm font-medium">{t("settings.sections.embedding.enableLabel")}</div>
-          <div className="text-xs text-muted-foreground">
-            {t("settings.sections.embedding.enableHint")}
-          </div>
+          <InfoTip label={t("settings.sections.embedding.enableHint")} />
         </div>
         <button
           type="button"
@@ -179,15 +173,15 @@ export function EmbeddingSection({ draft, setDraft }: Props) {
       {draft.embeddingEnabled && (
         <>
           <div className="space-y-2">
-            <Label>{t("settings.sections.embedding.endpoint")}</Label>
+            <div className="flex items-center gap-1.5">
+              <Label>{t("settings.sections.embedding.endpoint")}</Label>
+              <InfoTip label={t("settings.sections.embedding.endpointHint")} />
+            </div>
             <Input
               value={draft.embeddingEndpoint}
               onChange={(e) => setDraft("embeddingEndpoint", e.target.value)}
               placeholder="http://127.0.0.1:1234/v1/embeddings"
             />
-            <p className="text-xs text-muted-foreground">
-              {t("settings.sections.embedding.endpointHint")}
-            </p>
           </div>
 
           <div className="space-y-2">
@@ -210,7 +204,10 @@ export function EmbeddingSection({ draft, setDraft }: Props) {
           </div>
 
           <div className="space-y-2">
-            <Label>{t("settings.sections.embedding.outputDimensionality")}</Label>
+            <div className="flex items-center gap-1.5">
+              <Label>{t("settings.sections.embedding.outputDimensionality")}</Label>
+              <InfoTip label={t("settings.sections.embedding.outputDimensionalityHint")} />
+            </div>
             <Input
               type="number"
               min={1}
@@ -221,13 +218,13 @@ export function EmbeddingSection({ draft, setDraft }: Props) {
               }}
               placeholder="768"
             />
-            <p className="text-xs text-muted-foreground">
-              {t("settings.sections.embedding.outputDimensionalityHint")}
-            </p>
           </div>
 
           <div className="space-y-2">
-            <Label>{t("settings.sections.embedding.extraHeaders")}</Label>
+            <div className="flex items-center gap-1.5">
+              <Label>{t("settings.sections.embedding.extraHeaders")}</Label>
+              <InfoTip label={t("settings.sections.embedding.extraHeadersHint")} />
+            </div>
             <textarea
               value={headersText}
               onChange={(e) => {
@@ -239,9 +236,6 @@ export function EmbeddingSection({ draft, setDraft }: Props) {
               rows={3}
               className="flex w-full rounded-md border border-input bg-transparent px-3 py-2 font-mono text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
             />
-            <p className="text-xs text-muted-foreground">
-              {t("settings.sections.embedding.extraHeadersHint")}
-            </p>
           </div>
 
           <div className="space-y-3 rounded-md border p-3">
@@ -250,7 +244,10 @@ export function EmbeddingSection({ draft, setDraft }: Props) {
             </div>
 
             <div className="space-y-2">
-              <Label>{t("settings.sections.embedding.maxChunkChars")}</Label>
+              <div className="flex items-center gap-1.5">
+                <Label>{t("settings.sections.embedding.maxChunkChars")}</Label>
+                <InfoTip label={t("settings.sections.embedding.maxChunkCharsHint")} />
+              </div>
               <Input
                 type="number"
                 min={200}
@@ -265,13 +262,13 @@ export function EmbeddingSection({ draft, setDraft }: Props) {
                 }}
                 placeholder="1000"
               />
-              <p className="text-xs text-muted-foreground">
-                {t("settings.sections.embedding.maxChunkCharsHint")}
-              </p>
             </div>
 
             <div className="space-y-2">
-              <Label>{t("settings.sections.embedding.overlapChunkChars")}</Label>
+              <div className="flex items-center gap-1.5">
+                <Label>{t("settings.sections.embedding.overlapChunkChars")}</Label>
+                <InfoTip label={t("settings.sections.embedding.overlapChunkCharsHint")} />
+              </div>
               <Input
                 type="number"
                 min={0}
@@ -286,20 +283,15 @@ export function EmbeddingSection({ draft, setDraft }: Props) {
                 }}
                 placeholder="200"
               />
-              <p className="text-xs text-muted-foreground">
-                {t("settings.sections.embedding.overlapChunkCharsHint")}
-              </p>
             </div>
           </div>
 
           <div className="space-y-3 rounded-md border p-3">
-            <div>
+            <div className="flex items-center gap-1.5">
               <div className="text-sm font-medium">
                 {t("settings.sections.embedding.providerTests")}
               </div>
-              <p className="mt-1 text-xs text-muted-foreground">
-                {t("settings.sections.embedding.providerTestsHint")}
-              </p>
+              <InfoTip label={t("settings.sections.embedding.providerTestsHint")} />
             </div>
             <div className="flex flex-wrap gap-2">
               <Button

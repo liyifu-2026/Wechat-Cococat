@@ -9,6 +9,8 @@ import {
 
 import { cn } from "@/lib/utils"
 
+/** v4 size props: bare numbers = px; strings without units = %; use `"200px"` / `"30%"` explicitly. */
+
 function ResizablePanelGroup({
   className,
   direction,

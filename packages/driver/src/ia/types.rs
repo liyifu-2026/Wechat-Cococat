@@ -378,6 +378,9 @@ pub struct Chat {
     pub unread_count: i32,
     pub is_group: bool,
 
+    #[ts(optional)]
+    pub small_head_url: Option<String>,
+
     #[ts(optional, type = "number")]
     pub last_msg_local_id: Option<i64>,
 }
@@ -455,6 +458,10 @@ pub struct Message {
 
     #[ts(optional)]
     pub media_kind: Option<String>,
+
+    /// Console optimistic-send id; attached after send reconciles with DB row.
+    #[ts(optional)]
+    pub client_msg_id: Option<String>,
 }
 
 // ============================================
@@ -504,6 +511,12 @@ pub enum LoginSubscriptionEvent {
     },
     #[serde(rename = "phone_confirm")]
     PhoneConfirm {
+    
+        #[ts(optional)]
+        message: Option<String>,
+    },
+    #[serde(rename = "login_account")]
+    LoginAccount {
     
         #[ts(optional)]
         message: Option<String>,

@@ -2,6 +2,14 @@ use super::wechat_db::{get_db_path, query_wechat_db};
 use crate::ia::types::Chat;
 use std::collections::HashMap;
 
+fn small_head_url_from_contact(contact: Option<&serde_json::Value>) -> Option<String> {
+    contact
+        .and_then(|c| c.get("small_head_url"))
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .map(String::from)
+}
+
 /// List chats by querying WeChat's session.db and contact.db.
 pub fn list_chats(
     account_dir: &str,
@@ -137,6 +145,7 @@ pub fn list_chats(
                 remark,
                 unread_count,
                 is_group,
+                small_head_url: small_head_url_from_contact(contact),
                 last_message_preview,
                 last_message_sender,
                 last_activity_at,
@@ -214,6 +223,7 @@ pub fn get_chat_by_username(
         remark,
         unread_count,
         is_group,
+        small_head_url: small_head_url_from_contact(contact),
         last_message_preview: session
             .get("summary")
             .and_then(|v| v.as_str())
@@ -338,6 +348,7 @@ pub fn find_chats_by_name(
                     .and_then(|v| v.as_i64())
                     .unwrap_or(0) as i32,
                 is_group,
+                small_head_url: small_head_url_from_contact(Some(contact)),
                 last_message_preview: session
                     .get("summary")
                     .and_then(|v| v.as_str())

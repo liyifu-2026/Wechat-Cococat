@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { chatDirPath, DATA_DIR } from "../paths.js";
+import { getCococatDataRoot } from "@cococat/shared";
+import { chatDirPath } from "../paths.js";
 import type {
   ChatEscalationState,
   MaintainerPending,
@@ -8,18 +9,29 @@ import type {
   MuteReason,
 } from "./types.js";
 
-const ESCALATION_DIR = join(DATA_DIR, "escalation");
-const MUTES_PATH = join(ESCALATION_DIR, "mutes.json");
-const MAINTAINER_SESSION_PATH = join(ESCALATION_DIR, "maintainer-session.json");
+const MUTES_FILE = "mutes.json";
+const MAINTAINER_SESSION_FILE = "maintainer-session.json";
+
+function escalationDir(): string {
+  return join(getCococatDataRoot(), "escalation");
+}
+
+function mutesPath(): string {
+  return join(escalationDir(), MUTES_FILE);
+}
+
+function maintainerSessionPath(): string {
+  return join(escalationDir(), MAINTAINER_SESSION_FILE);
+}
+
+function ensureEscalationDir(): void {
+  mkdirSync(escalationDir(), { recursive: true });
+}
 
 const DEFAULT_CHAT_STATE: ChatEscalationState = {
   deflectSent: false,
   probeStreak: 0,
 };
-
-function ensureEscalationDir(): void {
-  mkdirSync(ESCALATION_DIR, { recursive: true });
-}
 
 function chatStatePath(chatId: string): string {
   return join(chatDirPath(chatId), "escalation-state.json");
@@ -61,9 +73,10 @@ type MuteFile = {
 
 function loadMutes(): MuteEntry[] {
   ensureEscalationDir();
-  if (!existsSync(MUTES_PATH)) return [];
+  const path = mutesPath();
+  if (!existsSync(path)) return [];
   try {
-    const raw = JSON.parse(readFileSync(MUTES_PATH, "utf8")) as MuteFile;
+    const raw = JSON.parse(readFileSync(path, "utf8")) as MuteFile;
     return Array.isArray(raw.entries) ? raw.entries : [];
   } catch {
     return [];
@@ -75,7 +88,7 @@ function saveMutes(entries: MuteEntry[]): void {
   const now = Date.now();
   const active = entries.filter((e) => e.mutedUntil > now);
   writeFileSync(
-    MUTES_PATH,
+    mutesPath(),
     JSON.stringify({ entries: active }, null, 2) + "\n",
     "utf8",
   );
@@ -99,14 +112,17 @@ export function muteChat(
   chatName: string,
   reason: MuteReason,
   hours: number,
+  opts?: { lastUserLine?: string },
 ): MuteEntry {
   const entries = listActiveMutes().filter((e) => e.chatId !== chatId);
+  const lastUserLine = opts?.lastUserLine?.trim();
   const entry: MuteEntry = {
     chatId,
     chatName,
     reason,
     mutedUntil: Date.now() + hours * 60 * 60 * 1000,
     triggeredAt: new Date().toISOString(),
+    ...(lastUserLine ? { lastUserLine } : {}),
   };
   entries.push(entry);
   saveMutes(entries);
@@ -121,14 +137,40 @@ export function unmuteChat(chatId: string): boolean {
   return true;
 }
 
+const MEMORY_PICK_TTL_MS = 10 * 60 * 1000;
+
+export function maintainerMemoryPickTtlMs(): number {
+  return MEMORY_PICK_TTL_MS;
+}
+
+function isExpiredMemoryPick(pending: MaintainerPending): boolean {
+  return (
+    pending.action === "pick_memory" &&
+    typeof pending.expiresAt === "number" &&
+    pending.expiresAt <= Date.now()
+  );
+}
+
 export function loadMaintainerPending(): MaintainerPending | null {
   ensureEscalationDir();
-  if (!existsSync(MAINTAINER_SESSION_PATH)) return null;
+  const path = maintainerSessionPath();
+  if (!existsSync(path)) return null;
   try {
     const raw = JSON.parse(
-      readFileSync(MAINTAINER_SESSION_PATH, "utf8"),
+      readFileSync(path, "utf8"),
     ) as MaintainerPending;
     if (raw.action === "pick_unmute" && Array.isArray(raw.candidates)) {
+      return raw;
+    }
+    if (
+      raw.action === "pick_memory" &&
+      Array.isArray(raw.candidates) &&
+      typeof raw.expiresAt === "number"
+    ) {
+      if (isExpiredMemoryPick(raw)) {
+        saveMaintainerPending(null);
+        return null;
+      }
       return raw;
     }
   } catch {
@@ -139,14 +181,15 @@ export function loadMaintainerPending(): MaintainerPending | null {
 
 export function saveMaintainerPending(pending: MaintainerPending | null): void {
   ensureEscalationDir();
+  const path = maintainerSessionPath();
   if (!pending) {
-    if (existsSync(MAINTAINER_SESSION_PATH)) {
-      writeFileSync(MAINTAINER_SESSION_PATH, "{}\n", "utf8");
+    if (existsSync(path)) {
+      writeFileSync(path, "{}\n", "utf8");
     }
     return;
   }
   writeFileSync(
-    MAINTAINER_SESSION_PATH,
+    path,
     JSON.stringify(pending, null, 2) + "\n",
     "utf8",
   );

@@ -1,6 +1,7 @@
 import { create } from "zustand"
 import {
   listEscalationMutes,
+  muteEscalationChat,
   unmuteEscalationChat,
   type EscalationMuteEntry,
 } from "@/lib/agent-config-client"
@@ -11,6 +12,12 @@ interface InboxMuteState {
   batchBusy: boolean
   refreshMutes: () => Promise<void>
   unmuteChat: (chatId: string) => Promise<boolean>
+  muteChat: (
+    chatId: string,
+    chatName: string,
+    reason: "escalate_a" | "manual" | "probe_b",
+    hours?: number,
+  ) => Promise<boolean>
   markAllDone: () => Promise<number>
 }
 
@@ -38,6 +45,25 @@ export const useInboxMuteStore = create<InboxMuteState>((set, get) => ({
         }))
       }
       await get().refreshMutes()
+      return changed
+    } finally {
+      set({ busyChatId: null })
+    }
+  },
+
+  muteChat: async (chatId, chatName, reason, hours) => {
+    if (!chatId.trim()) return false
+    set({ busyChatId: chatId })
+    try {
+      const changed = await muteEscalationChat({
+        chatId,
+        chatName,
+        reason,
+        hours,
+      })
+      if (changed) {
+        await get().refreshMutes()
+      }
       return changed
     } finally {
       set({ busyChatId: null })

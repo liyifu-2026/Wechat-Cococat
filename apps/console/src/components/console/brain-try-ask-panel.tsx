@@ -35,14 +35,14 @@ export function BrainTryAskPanel() {
   }
 
   return (
-    <aside className="flex w-[300px] shrink-0 flex-col border-l bg-card">
+    <aside className="flex h-full min-h-0 w-[300px] shrink-0 flex-col overflow-hidden border-l bg-card">
       <div className="border-b px-4 py-3">
         <h3 className="text-sm font-semibold">{t("console.brain.tryAskTitle")}</h3>
         <p className="mt-1 text-xs text-muted-foreground">
           {t("console.brain.tryAskHint")}
         </p>
       </div>
-      <div className="flex flex-1 flex-col gap-3 overflow-auto p-4">
+      <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-4">
         <Input
           value={query}
           onChange={(e) => setQuery(e.target.value)}

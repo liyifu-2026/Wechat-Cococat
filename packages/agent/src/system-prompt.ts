@@ -1,6 +1,7 @@
 import { readChatPersona } from "./persona.js";
 import { DISCIPLINE_LAYER } from "./discipline.js";
 import { WIKI_SYSTEM_PROMPT_APPEND } from "./prompt.js";
+import { AGENT_HANDOFF_PROMPT } from "./escalation/agent-handoff.js";
 import { loadWikiRegistry, type WikiRegistry } from "./wiki-registry.js";
 import { wikiContextManager } from "./wiki-context.js";
 
@@ -13,6 +14,10 @@ export type SystemPromptContext = {
   /** 动态知识库范围块；缺省时 wikiEnabled 仍回退静态 append */
   wikiScopePrompt?: string;
   longTermMemory?: string;
+  /** 私聊客服 + escalation 启用时注入主动升级说明 */
+  agentHandoffEnabled?: boolean;
+  /** 人类设定的客户类型与行为指南（每轮实时读取 profile） */
+  customerContextPrompt?: string;
 };
 
 function sceneLine(chatName: string, isGroup: boolean): string {
@@ -27,6 +32,10 @@ export function buildSystemPrompt(ctx: SystemPromptContext): string {
 
   const middle: string[] = [];
 
+  if (ctx.customerContextPrompt?.trim()) {
+    middle.push(ctx.customerContextPrompt.trim());
+  }
+
   if (ctx.envOverride?.trim()) {
     middle.push(ctx.envOverride.trim());
   } else {
@@ -38,6 +47,9 @@ export function buildSystemPrompt(ctx: SystemPromptContext): string {
       const wikiBlock =
         ctx.wikiScopePrompt?.trim() || WIKI_SYSTEM_PROMPT_APPEND.trim();
       middle.push(wikiBlock);
+    }
+    if (ctx.agentHandoffEnabled) {
+      middle.push(AGENT_HANDOFF_PROMPT);
     }
   }
 

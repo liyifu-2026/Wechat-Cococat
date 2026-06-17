@@ -1,4 +1,4 @@
-import type { ChatEscalationState, TriageAction, TriageResult } from "./types.js";
+import type { ChatEscalationState, GateAction } from "./types.js";
 import { formatTranscriptForGate } from "../transcript-context.js";
 import type { TranscriptEntry } from "../transcript.js";
 
@@ -10,18 +10,16 @@ export type TriageLlmConfig = {
 
 const TRIAGE_SYSTEM = `你是微信私聊客服的「统一分流器」，不是客服本人。
 只输出一行 JSON，不要 markdown，不要解释：
-{"action":"reply|silent|deflect|ignore|escalate_a|probe_b","reason":"简短中文","confidence":0.0到1.0}
+{"action":"continue|skip|handoff","reason":"简短中文","confidence":0.0到1.0}
 
-含义：
-- reply：需要客服正常回复（含在回答 bot 提问、确认选项、业务咨询、短附和但有上下文）
-- silent：低信息量且不必回复（对话已结束后的嗯/好、纯附和、无业务推进）
-- deflect：首次试探是否 AI/机器人（简短_redirect，不要辩论）
-- ignore：DEFLECT 后的继续试探、空撩、恶搞（不应再回）
-- escalate_a：明确要求人工、投诉、退款纠纷、法律威胁等高风险
-- probe_b：DEFLECT 后仍连续纠缠身份（升级维护者）
+三档含义：
+- continue：需要客服正常回复（业务咨询、确认选项、有上下文的短附和、bot 刚提问后的嗯/好/行）
+- skip：不必进主 Agent 的消息（身份/AI 试探、deflect 后的继续空撩、无业务推进的恶搞；不含空消息）
+- handoff：明确要求人工、投诉、退款纠纷、法律威胁等高风险（不含单纯身份试探，那属于 skip）
 
-判 silent vs reply 时必看【近期对话】：若 bot 刚提问/等确认，客户的「好/嗯/行」→ reply。
-confidence：你对 action 把握程度，0 极不确定，1 极确定。`;
+兜底原则（极重要）：无法明确判定为 skip 或 handoff 时，一律 continue。Gate 的天职是放行，不是拦截。
+
+confidence：对 action 把握程度，0 极不确定，1 极确定。`;
 
 export function loadTriageLlmConfig(): TriageLlmConfig | undefined {
   if (process.env.WECHAT_TRIAGE_LLM_ENABLED === "false") return undefined;
@@ -42,6 +40,7 @@ export function loadTriageLlmConfig(): TriageLlmConfig | undefined {
   const model =
     process.env.WECHAT_TRIAGE_MODEL?.trim() ||
     process.env.TDAI_LLM_MODEL?.trim() ||
+    process.env.PI_MODEL?.trim() ||
     "deepseek-chat";
 
   return { apiUrl, apiKey, model };
@@ -53,14 +52,7 @@ type LlmTriagePayload = {
   confidence?: number;
 };
 
-const VALID_ACTIONS = new Set<TriageAction>([
-  "reply",
-  "silent",
-  "deflect",
-  "ignore",
-  "escalate_a",
-  "probe_b",
-]);
+const VALID_GATES = new Set<GateAction>(["continue", "skip", "handoff"]);
 
 function parseJsonPayload(text: string): LlmTriagePayload | null {
   const trimmed = text.trim();
@@ -74,9 +66,11 @@ function parseJsonPayload(text: string): LlmTriagePayload | null {
   }
 }
 
-export type LlmTriageOutcome = TriageResult & {
+export type LlmGateOutcome = {
+  gate: GateAction;
+  reason: string;
   confidence: number;
-  source: "llm" | "rules";
+  source: "llm";
 };
 
 export async function triageWithLlm(
@@ -84,7 +78,7 @@ export async function triageWithLlm(
   combinedText: string,
   chatState: ChatEscalationState,
   transcriptEntries: TranscriptEntry[] = [],
-): Promise<LlmTriageOutcome | null> {
+): Promise<LlmGateOutcome | null> {
   const user = [
     `deflectSent=${chatState.deflectSent}`,
     `probeStreak=${chatState.probeStreak}`,
@@ -126,7 +120,7 @@ export async function triageWithLlm(
   if (!content) return null;
 
   const payload = parseJsonPayload(content);
-  if (!payload?.action || !VALID_ACTIONS.has(payload.action as TriageAction)) {
+  if (!payload?.action || !VALID_GATES.has(payload.action as GateAction)) {
     return null;
   }
 
@@ -138,7 +132,7 @@ export async function triageWithLlm(
       : 0.5;
 
   return {
-    action: payload.action as TriageAction,
+    gate: payload.action as GateAction,
     reason: payload.reason?.trim() || "llm",
     confidence,
     source: "llm",

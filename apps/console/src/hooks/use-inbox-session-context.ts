@@ -17,18 +17,20 @@ import {
   autoTagsFromEscalation,
   formatTriageSummary,
   lastMessageTimestamp,
+  patchChatProfile,
   readChatEscalationState,
   readChatProfile,
-  writeChatProfile,
   type ChatEscalationState,
 } from "@/lib/inbox-profile"
+import { useChatLastActivityMs } from "@/stores/inbox-last-activity-store"
 
 export function useInboxSessionContext(
   chat: DriverChat | null,
   muteEntry: EscalationMuteEntry | null,
   messages: DriverMessage[],
 ) {
-  const [manualTags, setManualTags] = useState<string[]>([])
+  const [agentTags, setAgentTags] = useState<string[]>([])
+  const [userType, setUserType] = useState<string | null>(null)
   const [escalationState, setEscalationState] = useState<ChatEscalationState>({
     deflectSent: false,
     probeStreak: 0,
@@ -39,13 +41,15 @@ export function useInboxSessionContext(
   const [kbHits, setKbHits] = useState<string[]>([])
   const [firstContact, setFirstContact] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
-  const [tagSaving, setTagSaving] = useState(false)
+  const [profileSaving, setProfileSaving] = useState(false)
 
   const chatId = chat?.id ?? null
+  const indexedLastMs = useChatLastActivityMs(chatId)
 
   const reload = useCallback(async () => {
     if (!chatId) {
-      setManualTags([])
+      setAgentTags([])
+      setUserType(null)
       setEscalationState({ deflectSent: false, probeStreak: 0 })
       setMemoryLines([])
       setMemoryGatewayUp(false)
@@ -65,7 +69,8 @@ export function useInboxSessionContext(
           fetchMemoryHealth().catch(() => null),
         ])
       setKbHits(hits)
-      setManualTags(profile.tags ?? [])
+      setAgentTags(profile.tags ?? [])
+      setUserType(profile.userType?.trim() || null)
       setEscalationState(state)
       setMemoryLines(memory.lines ?? [])
       setMemoryGatewayUp(
@@ -114,42 +119,31 @@ export function useInboxSessionContext(
     [muteEntry, escalationState],
   )
 
-  const lastContact = useMemo(
-    () => lastMessageTimestamp(messages) ?? muteEntry?.triggered_at ?? null,
-    [messages, muteEntry?.triggered_at],
-  )
+  const lastContact = useMemo(() => {
+    const fromMessages = lastMessageTimestamp(messages)
+    if (fromMessages) return fromMessages
+    if (indexedLastMs != null) {
+      return new Date(indexedLastMs).toISOString()
+    }
+    if (muteEntry?.triggered_at) return muteEntry.triggered_at
+    return null
+  }, [indexedLastMs, messages, muteEntry?.triggered_at])
 
-  const persistTags = useCallback(
-    async (next: string[]) => {
+  const setUserTypeValue = useCallback(
+    async (next: string | null) => {
       if (!chatId) return
-      setTagSaving(true)
+      setProfileSaving(true)
       try {
-        await writeChatProfile(chatId, next)
-        setManualTags(next)
+        const profile = await patchChatProfile(chatId, {
+          userType: next?.trim() || null,
+        })
+        setUserType(profile.userType?.trim() || null)
+        setAgentTags(profile.tags ?? [])
       } finally {
-        setTagSaving(false)
+        setProfileSaving(false)
       }
     },
     [chatId],
-  )
-
-  const addTag = useCallback(
-    async (raw: string) => {
-      const tag = raw.trim()
-      if (!tag || !chatId) return
-      const merged = [...manualTags]
-      if (merged.includes(tag) || autoTags.includes(tag)) return
-      await persistTags([...merged, tag])
-    },
-    [autoTags, chatId, manualTags, persistTags],
-  )
-
-  const removeTag = useCallback(
-    async (tag: string) => {
-      if (!chatId) return
-      await persistTags(manualTags.filter((t) => t !== tag))
-    },
-    [chatId, manualTags, persistTags],
   )
 
   const memoryState = useMemo<MemoryDisplayState>(
@@ -159,7 +153,8 @@ export function useInboxSessionContext(
 
   return {
     loading,
-    manualTags,
+    agentTags,
+    userType,
     autoTags,
     triageSummary,
     kbHits,
@@ -168,9 +163,8 @@ export function useInboxSessionContext(
     memoryGatewayUp,
     firstContact,
     lastContact,
-    tagSaving,
-    addTag,
-    removeTag,
+    profileSaving,
+    setUserType: setUserTypeValue,
     reload,
   }
 }

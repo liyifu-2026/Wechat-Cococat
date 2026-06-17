@@ -3,6 +3,12 @@
     "chatId": "",
     "displayName": "维护者备注名"
   },
+  "maintainers": [
+    {
+      "chatId": "",
+      "displayName": "维护者备注名"
+    }
+  ],
   "notifyOn": {
     "escalate": true,
     "probeLoop": true,
@@ -19,6 +25,7 @@
     "probeLoop": 2
   },
   "probeStreakThreshold": 2,
+  "agentHandoffEnabled": true,
   "wikiLinks": [
     {
       "path": "faq/refund.md",

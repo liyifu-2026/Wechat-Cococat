@@ -25,7 +25,7 @@ export type AgentMappingResult =
   | { ok: true; mapping: AgentEnvMapping }
   | { ok: false; reasonKey: string }
 
-function effectiveBaseUrl(preset: LlmPreset, ov: ProviderOverride): string {
+export function effectiveBaseUrl(preset: LlmPreset, ov: ProviderOverride): string {
   const apiMode = ov.apiMode ?? preset.apiMode ?? "chat_completions"
   return ov.baseUrl ?? preset.baseUrlByMode?.[apiMode] ?? preset.baseUrl ?? ""
 }

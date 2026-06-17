@@ -12,7 +12,7 @@ const NO_LEGACY_WIKI_ESCAPE = [
   "App.tsx",
   "components/console/brain-wiki-panel.tsx",
   "components/console/system-knowledge-panel.tsx",
-  "components/console/system-module.tsx",
+  "components/wechat/wechat-settings-modal.tsx",
   "components/console/command-palette.tsx",
 ]
 
@@ -23,7 +23,7 @@ function readConsoleSource(relativePath: string): string {
 describe("Console v2 Phase 5 — activeView isolation & escape hatch removal", () => {
   beforeEach(() => {
     useWikiStore.setState({ activeView: "lint" })
-    useConsoleStore.setState({ activeModule: "overview" })
+    useConsoleStore.setState({ activeModule: "inbox" })
   })
 
   it("J2: navigateSystemKnowledge resets global activeView to wiki", async () => {
@@ -31,9 +31,8 @@ describe("Console v2 Phase 5 — activeView isolation & escape hatch removal", (
 
     expect(useWikiStore.getState().activeView).toBe("wiki")
     await vi.waitFor(() => {
-      expect(useConsoleStore.getState().activeModule).toBe("system")
+      expect(useConsoleStore.getState().activeWechatTab).toBe("kb")
     })
-    expect(useConsoleStore.getState().pendingSystemPanel).toBe("knowledge")
   })
 
   it("J4: core panels must not call setActiveModule('wiki')", () => {
@@ -50,36 +49,43 @@ describe("Console v2 Phase 5 — activeView isolation & escape hatch removal", (
     expect(source).not.toMatch(/<AppLayout\b/)
     expect(source).not.toMatch(/from\s+["']@\/components\/layout\/app-layout["']/)
   })
-
-  it("J4: WikiExpertEmbed shell is removed from System module", () => {
-    const source = readConsoleSource("components/console/system-module.tsx")
-    expect(source).not.toMatch(/WikiExpertEmbed/)
-    expect(source).toMatch(/SystemKnowledgePanel/)
-  })
 })
 
-describe("Console v2 Phase 6A — single-track four-zone routing", () => {
+describe("Console v2 Phase 6A — WeChat shell routing", () => {
   it("maps legacy wiki module to brain/kb", () => {
     const result = migrateLegacyModule("wiki")
     expect(result.module).toBe("brain")
     expect(result.brainTab).toBe("kb")
   })
 
-  it("App.tsx renders only v2 four-zone modules (no legacy AppLayout tree)", () => {
+  it("App.tsx mounts WechatShell (no legacy four-zone tree)", () => {
     const source = readConsoleSource("App.tsx")
     expect(source).not.toMatch(/<AppLayout\b/)
     expect(source).not.toMatch(/<WelcomeScreen\b/)
-    expect(source).not.toMatch(/activeModule === ["']wiki["']/)
-    expect(source).toMatch(/OverviewModule/)
-    expect(source).toMatch(/InboxModule/)
-    expect(source).toMatch(/BrainModule/)
-    expect(source).toMatch(/SystemModule/)
+    expect(source).not.toMatch(/ConsoleShell/)
+    expect(source).not.toMatch(/OverviewModule/)
+    expect(source).not.toMatch(/SystemModule/)
+    expect(source).toMatch(/WechatShell/)
   })
 
   it("command palette routes Wiki entry to navigateBrain(kb)", () => {
     const source = readConsoleSource("components/console/command-palette.tsx")
     expect(source).not.toMatch(/setActiveModule\s*\(\s*["']wiki["']\s*\)/)
     expect(source).toMatch(/navigateBrain\s*\(\s*["']kb["']\s*\)/)
+  })
+
+  it("Brain opens in knowledge shell tab (ai-lab tab removed)", () => {
+    expect(readConsoleSource("components/wechat/wechat-nav-rail.tsx")).not.toMatch(
+      /ai-lab/,
+    )
+    expect(() =>
+      readConsoleSource("components/wechat/ai-lab-panel.tsx"),
+    ).toThrow()
+    const store = readConsoleSource("stores/console-store.ts")
+    expect(store).toMatch(/activeWechatTab:\s*"kb"/)
+    expect(readConsoleSource("components/wechat/wechat-shell.tsx")).toMatch(
+      /WechatKnowledgePanel/,
+    )
   })
 })
 
@@ -100,8 +106,8 @@ describe("Console v2 Phase 6B — WikiWorkspace layout primitive", () => {
 })
 
 describe("Console v2 Phase 6C — visibility gating", () => {
-  it("stack health polling is delegated to StackHealthPoller", () => {
-    expect(readConsoleSource("components/console/console-shell.tsx")).toMatch(
+  it("stack health polling is delegated to StackHealthPoller in WechatShell", () => {
+    expect(readConsoleSource("components/wechat/wechat-shell.tsx")).toMatch(
       /StackHealthPoller/,
     )
     expect(readConsoleSource("hooks/use-stack-health.ts")).not.toMatch(
@@ -109,7 +115,7 @@ describe("Console v2 Phase 6C — visibility gating", () => {
     )
   })
 
-  it("inbox and overview hooks use visibility gating", () => {
+  it("inbox hooks use visibility gating", () => {
     expect(readConsoleSource("hooks/use-driver-inbox.ts")).toMatch(
       /useVisibilityGatedInterval/,
     )
@@ -119,5 +125,19 @@ describe("Console v2 Phase 6C — visibility gating", () => {
     expect(readConsoleSource("components/console/inbox-mute-poller.tsx")).toMatch(
       /useVisibilityGatedInterval/,
     )
+  })
+})
+
+describe("WeChat shell legacy cleanup", () => {
+  it("removes deprecated ConsoleShell and overview/system modules", () => {
+    expect(() =>
+      readConsoleSource("components/console/console-shell.tsx"),
+    ).toThrow()
+    expect(() =>
+      readConsoleSource("components/console/overview-module.tsx"),
+    ).toThrow()
+    expect(() =>
+      readConsoleSource("components/console/system-module.tsx"),
+    ).toThrow()
   })
 })

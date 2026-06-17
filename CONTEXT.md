@@ -33,8 +33,12 @@ CocoCat Console 内的知识库编辑与检索界面（由原 llm_wiki UI 迁入
 _Avoid_: 单独安装的「Wiki 应用」叙事
 
 **WeChat module**  
-Console 内连接 Driver 的运维视图：状态、登录、VNC、只读会话列表；M1 不在 Console 内发消息。  
-_Avoid_: 第二个微信客户端
+Console 内连接 Driver 的微信视图：状态、登录、VNC、会话列表与收件箱。支持 **双模式**：`agentProxyEnabled=true` 时为 Agent 托管（只读监控）；关闭代理后暂停自动回复，激活人工操作通道（MVP V2.5 起私聊文字收发，见收件箱计划）。  
+_Avoid_: 在未关闭 Agent 代理时从 Console 代发客户消息
+
+**Inbox（收件箱）**  
+Console 内微信会话主界面：会话列表 + 气泡 + 本会话画像/分流。通过 per-chat **`agentProxyEnabled`**（`style.json`）切换托管与人工模式。  
+_Avoid_: 把收件箱仅叙述为「只读维护者视图」（V2.5 已扩展）
 
 **Agent control**  
 Console 内一键启停 **CocoCat Agent**、**CocoCat Driver**、**CocoCat Memory**；按 OS 分脚本，并约定 PID/lockfile。  

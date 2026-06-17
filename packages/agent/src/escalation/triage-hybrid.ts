@@ -1,16 +1,20 @@
 import type { Message } from "@cococat/shared";
 import type { TranscriptEntry } from "../transcript.js";
-import type { EscalationConfig } from "./types.js";
-import type { ChatEscalationState, TriageResult } from "./types.js";
-import { loadTriageLlmConfig, triageWithLlm, type LlmTriageOutcome } from "./triage-llm.js";
-import { triageCustomerText } from "./triage.js";
+import type { ChatEscalationState, EscalationConfig, GateAction } from "./types.js";
+import { loadTriageLlmConfig, triageWithLlm } from "./triage-llm.js";
+import {
+  executedActionToDisplayAction,
+  normalizeGateOutcome,
+  type ExecutedAction,
+  type NormalizedGateOutcome,
+} from "./triage-normalize.js";
 
-export type HybridTriageOutcome = TriageResult & {
-  confidence: number;
-  source: "rules" | "llm";
+export type GateTriageOutcome = NormalizedGateOutcome & {
+  /** Console / 旧 API 展示别名 */
+  action: string;
 };
 
-export type HybridTriageParams = {
+export type GateTriageParams = {
   combinedText: string;
   chatState: ChatEscalationState;
   config: EscalationConfig;
@@ -18,57 +22,79 @@ export type HybridTriageParams = {
   transcriptEntries?: TranscriptEntry[];
 };
 
-function rulesOutcome(
-  result: TriageResult,
-  confidence = 1,
-): HybridTriageOutcome {
-  return { ...result, confidence, source: "rules" };
-}
-
-/** 规则未决或 reply 默认 → 小模型（含 transcript）二次判决。 */
-function needsLlmPass(ruleResult: TriageResult): boolean {
-  if (ruleResult.action === "silent") return false;
-  if (ruleResult.action !== "reply") return false;
-  if (ruleResult.reason === "business_resumed") return false;
-  return true;
+function finalizeOutcome(
+  raw: {
+    gate: GateAction;
+    reason: string;
+    confidence: number;
+    source: "llm" | "fallback";
+  },
+  chatState: ChatEscalationState,
+  config: EscalationConfig,
+): GateTriageOutcome {
+  const normalized = normalizeGateOutcome(
+    {
+      gate: raw.gate,
+      reason: raw.reason,
+      confidence: raw.confidence,
+      source: raw.source,
+    },
+    chatState,
+    config,
+  );
+  return {
+    ...normalized,
+    action: executedActionToDisplayAction(normalized.executedAction),
+  };
 }
 
 export function isUnifiedGateLlmEnabled(config: EscalationConfig): boolean {
   const env = process.env.WECHAT_UNIFIED_GATE_LLM?.trim().toLowerCase();
   if (env === "0" || env === "false" || env === "no") return false;
   if (env === "1" || env === "true" || env === "yes") return true;
-  if (config.triageUseLlm) return true;
-  return true;
+  return config.triageUseLlm;
 }
 
-export async function triageCustomerHybrid(
-  params: HybridTriageParams,
-): Promise<HybridTriageOutcome> {
+/** 统一 Gate：3 档 LLM → 状态机 → ExecutedAction；无 LLM 时 fallback continue。 */
+export async function triageCustomerGate(
+  params: GateTriageParams,
+): Promise<GateTriageOutcome> {
   const {
     combinedText,
     chatState,
     config,
-    messages,
     transcriptEntries = [],
   } = params;
 
-  const ruleResult = triageCustomerText(
-    combinedText,
-    chatState,
-    config,
-    messages,
-  );
-  if (!needsLlmPass(ruleResult)) {
-    return rulesOutcome(ruleResult);
+  const text = combinedText.trim();
+  if (!text) {
+    return finalizeOutcome(
+      { gate: "skip", reason: "empty", confidence: 1, source: "fallback" },
+      chatState,
+      config,
+    );
   }
 
   if (!isUnifiedGateLlmEnabled(config)) {
-    return rulesOutcome(ruleResult, 0.65);
+    return finalizeOutcome(
+      { gate: "continue", reason: "llm_disabled", confidence: 0.5, source: "fallback" },
+      chatState,
+      config,
+    );
   }
 
   const llmConfig = loadTriageLlmConfig();
   if (!llmConfig) {
-    return rulesOutcome(ruleResult, 0.65);
+    return finalizeOutcome(
+      {
+        gate: "continue",
+        reason: "llm_unconfigured",
+        confidence: 0.5,
+        source: "fallback",
+      },
+      chatState,
+      config,
+    );
   }
 
   try {
@@ -78,10 +104,34 @@ export async function triageCustomerHybrid(
       chatState,
       transcriptEntries,
     );
-    if (llm) return llm;
+    if (llm) {
+      return finalizeOutcome(
+        {
+          gate: llm.gate,
+          reason: llm.reason,
+          confidence: llm.confidence,
+          source: llm.source,
+        },
+        chatState,
+        config,
+      );
+    }
   } catch (err) {
-    console.warn("[pi-wechat] unified gate LLM failed, using rules:", err);
+    console.warn("[pi-wechat] unified gate LLM failed, using fallback:", err);
   }
 
-  return rulesOutcome(ruleResult, 0.65);
+  return finalizeOutcome(
+    { gate: "continue", reason: "llm_failed", confidence: 0.5, source: "fallback" },
+    chatState,
+    config,
+  );
 }
+
+/** @deprecated use triageCustomerGate */
+export const triageCustomerHybrid = triageCustomerGate;
+
+/** @deprecated use GateTriageOutcome */
+export type HybridTriageOutcome = GateTriageOutcome;
+
+/** @deprecated use GateTriageParams */
+export type HybridTriageParams = GateTriageParams;

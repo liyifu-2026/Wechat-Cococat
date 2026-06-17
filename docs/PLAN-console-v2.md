@@ -358,7 +358,7 @@ pendingSystemWechat?: boolean   // 打开微信连接并展开排障
 | v1 文档与实现双轨 | 壳层以本文为准；`PLAN-console-ux.md` 顶部加「v2 取代壳层 IA」注记 |
 | 可可猫 vs 官方口吻 | S0 统一示例；`CONTEXT.md` 品牌句可保留「AI 伙伴」对外叙事，**微信回复**以官方客服为准 |
 
-**非目标（本计划不做）**：Console 内代发微信、群聊 triage、完整 CRM、坐席多用户权限。
+**非目标（本计划不做）**：~~Console 内代发微信~~（V2.5 收件箱 MVP 已纳入私聊文字收发 + Agent 代理开关）、群聊 triage、完整 CRM、坐席多用户权限。
 
 ---
 

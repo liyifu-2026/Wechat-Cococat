@@ -12,11 +12,17 @@
   "app": {
     "windows": [
       {
+        "label": "main",
         "title": "CocoCat",
-        "width": 1200,
-        "height": 800,
+        "width": 1280,
+        "height": 820,
+        "minWidth": 960,
+        "minHeight": 640,
         "resizable": true,
-        "fullscreen": false
+        "fullscreen": false,
+        "decorations": false,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true
       }
     ],
     "security": {

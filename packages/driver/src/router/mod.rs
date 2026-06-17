@@ -45,8 +45,14 @@ pub fn build_router() -> Router {
         // Contacts
         .route("/api/contacts", get(contacts::list_contacts))
         .route("/api/contacts/find", get(contacts::find_contacts))
+        .route("/api/contacts/avatar", get(contacts::proxy_avatar))
+        .route("/api/contacts/user/{username}", get(contacts::get_contact))
         // Messages
         .route("/api/messages/{chat_id}", get(messages::list_messages))
+        .route(
+            "/api/messages/{chat_id}/around/{local_id}",
+            get(messages::list_messages_around),
+        )
         .route(
             "/api/messages/{chat_id}/media/{local_id}",
             get(messages::get_media),

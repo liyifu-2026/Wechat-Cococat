@@ -2,6 +2,7 @@ use super::Plan;
 use crate::ia::actions;
 use crate::ia::selectors::{query_selector, query_selector_all};
 use crate::ia::types::*;
+use crate::ia::wechat_compose::find_edit_and_send_button;
 use crate::tools::chat_select::{open_chat, OpenChatResult};
 
 pub struct ChatOpenPlan;
@@ -24,36 +25,7 @@ pub enum ChatOpenPhase {
 }
 
 fn find_edit_area(a11y: &A11yNode) -> Option<&A11yNode> {
-    find_edit_near_send(a11y)
-}
-
-fn find_edit_near_send(node: &A11yNode) -> Option<&A11yNode> {
-    if let Some(children) = &node.children {
-        let has_send = children.iter().any(|c| {
-            c.role == "push-button" && c.name == "Send(S)"
-        });
-        let edit_node = children.iter().find(|c| {
-            c.role == "text"
-                && c.states
-                    .as_ref()
-                    .map(|s| s.iter().any(|st| st == "EDITABLE"))
-                    .unwrap_or(false)
-        });
-
-        if has_send {
-            if let Some(edit) = edit_node {
-                return Some(edit);
-            }
-        }
-
-        // Recurse
-        for child in children {
-            if let Some(result) = find_edit_near_send(child) {
-                return Some(result);
-            }
-        }
-    }
-    None
+    find_edit_and_send_button(a11y).map(|(edit, _)| edit)
 }
 
 #[async_trait::async_trait]

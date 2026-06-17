@@ -6,6 +6,7 @@ import { appendAgentTrace } from "./agent-trace.js";
 import { formatIncomingBatchMultimodal } from "./media.js";
 import type { MimoAudioInput } from "./mimo-audio.js";
 import { buildSystemPrompt, resolveWikiScopePrompt } from "./system-prompt.js";
+import { resolveCustomerContextPrompt } from "./customer-context-prompt.js";
 
 export type EnrichedInbound = {
   prompt: string;
@@ -93,6 +94,7 @@ export async function prepareInboundMemoryContext(params: {
   pendingAudiosRef: { current: MimoAudioInput[] };
   pendingVoiceCaptionRef: { current: boolean };
   envOverride?: string;
+  agentHandoffEnabled?: boolean;
 }): Promise<void> {
   const {
     config,
@@ -107,6 +109,7 @@ export async function prepareInboundMemoryContext(params: {
     pendingAudiosRef,
     pendingVoiceCaptionRef,
     envOverride,
+    agentHandoffEnabled,
   } = params;
 
   const recallQuery = userLines.join("\n").slice(0, 500);
@@ -137,6 +140,10 @@ export async function prepareInboundMemoryContext(params: {
       config.wikiClient?.getRegistry(),
     ),
     longTermMemory,
+    agentHandoffEnabled: agentHandoffEnabled === true,
+    customerContextPrompt: isGroupChat
+      ? ""
+      : resolveCustomerContextPrompt(chatCtx.chatId),
   });
 
   if (audios.length > 0) {

@@ -38,6 +38,63 @@ fn is_system_account(username: &str) -> bool {
     SYSTEM_USERNAMES.contains(&username)
 }
 
+fn row_to_contact(row: &serde_json::Value) -> Option<Contact> {
+    let username = row.get("username")?.as_str()?;
+    if is_system_account(username) {
+        return None;
+    }
+    let local_type = row
+        .get("local_type")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(3);
+    Some(Contact {
+        username: username.to_string(),
+        nick_name: row
+            .get("nick_name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string(),
+        remark: row
+            .get("remark")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .map(String::from),
+        alias: row
+            .get("alias")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .map(String::from),
+        small_head_url: row
+            .get("small_head_url")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .map(String::from),
+        contact_type: classify_contact(username, local_type).to_string(),
+    })
+}
+
+/// Lookup a single contact by wxid (includes chatrooms / group members).
+pub fn get_contact_by_username(
+    account_dir: &str,
+    keys: &HashMap<String, String>,
+    username: &str,
+) -> Option<Contact> {
+    let contact_key = keys.get("contact.db")?;
+    let contact_db = get_db_path(account_dir, "contact.db");
+    let escaped = username.replace('\'', "''");
+    let rows = query_wechat_db(
+        &contact_db,
+        contact_key,
+        &format!(
+            "SELECT username, nick_name, remark, alias, small_head_url, local_type
+             FROM contact
+             WHERE username = '{escaped}'
+             LIMIT 1;"
+        ),
+    );
+    rows.first().and_then(row_to_contact)
+}
+
 /// List contacts from contact.db.
 /// Queries the contact table directly (not session.db), returning all stored contacts.
 pub fn list_contacts(

@@ -17,15 +17,9 @@ import {
   loadApiConfig,
 } from "@/lib/project-store"
 import { setupAutoSave } from "@/lib/auto-save"
-import { ConsoleShell } from "@/components/console/console-shell"
-import { OverviewModule } from "@/components/console/overview-module"
-import { InboxModule } from "@/components/console/inbox-module"
-import { BrainModule } from "@/components/console/brain-module"
-import { SystemModule } from "@/components/console/system-module"
-import { useConsoleStore } from "@/stores/console-store"
+import { WechatShell } from "@/components/wechat/wechat-shell"
 
 function App() {
-  const activeModule = useConsoleStore((s) => s.activeModule)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
@@ -107,25 +101,10 @@ function App() {
     void init()
   }, [])
 
-  function renderModule() {
-    switch (activeModule) {
-      case "overview":
-        return <OverviewModule />
-      case "inbox":
-        return <InboxModule />
-      case "brain":
-        return <BrainModule />
-      case "system":
-        return <SystemModule />
-      default:
-        return <OverviewModule />
-    }
-  }
-
   return (
-    <ConsoleShell>
+    <WechatShell>
       {loading ? (
-        <div className="flex h-full items-center justify-center">
+        <div className="flex h-full items-center justify-center bg-[var(--wechat-dark-bg)]">
           <div className="w-full max-w-md space-y-4 p-6">
             <Skeleton className="h-8 w-3/4" />
             <Skeleton className="h-4 w-full" />
@@ -134,10 +113,8 @@ function App() {
             <Skeleton className="mt-6 h-32 w-full" />
           </div>
         </div>
-      ) : (
-        renderModule()
-      )}
-    </ConsoleShell>
+      ) : null}
+    </WechatShell>
   )
 }
 

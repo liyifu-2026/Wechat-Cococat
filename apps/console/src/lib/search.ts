@@ -61,6 +61,7 @@ export function tokenizeQuery(query: string): string[] {
 export async function searchWiki(
   projectPath: string,
   query: string,
+  topK = 20,
 ): Promise<SearchResult[]> {
   if (!query.trim()) return []
   const pp = normalizePath(projectPath)
@@ -69,7 +70,7 @@ export async function searchWiki(
   const response = await invoke<BackendSearchResponse>("search_project", {
     projectPath: pp,
     query,
-    topK: 20,
+    topK,
     includeContent: false,
     queryEmbedding: null,
     embeddingConfig: embCfg,

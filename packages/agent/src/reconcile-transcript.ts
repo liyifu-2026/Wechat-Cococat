@@ -1,9 +1,9 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { WeChatClient } from "@cococat/shared";
+import { encodeChatDir, getCococatDataRoot } from "@cococat/shared";
 import { ensureChatContext, updateChatMeta } from "./chat-store.js";
 import { clearCaptionDirty } from "./caption-dirty.js";
-import { encodeChatDir, chatsRootDir } from "./paths.js";
 import {
   dbMessagesToTranscript,
   saveTranscript,
@@ -20,7 +20,7 @@ function chatIdFromEncodedDir(name: string): string | undefined {
 }
 
 export function listKnownChatIds(): string[] {
-  const root = chatsRootDir();
+  const root = join(getCococatDataRoot(), "chats");
   if (!existsSync(root)) return [];
   const ids: string[] = [];
   for (const name of readdirSync(root)) {

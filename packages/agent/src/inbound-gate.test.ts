@@ -1,5 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { writeFileSync } from "node:fs";
 import type { Message } from "@cococat/shared";
 import { ensureChatContext } from "./chat-store.js";
 import type { GroupConfig } from "./group-config.js";
@@ -135,5 +136,35 @@ describe("inbound-gate", () => {
     });
 
     assert.equal(result.action, "proceed");
+  });
+
+  it("discards private chat when agent proxy is off", async () => {
+    const chatId = "gate-proxy-off@test";
+    const chatCtx = ensureChatContext(chatId);
+    writeFileSync(
+      chatCtx.stylePath,
+      JSON.stringify({ agentProxyEnabled: false }, null, 2) + "\n",
+      "utf8",
+    );
+    const unseen = [{ localId: 11, isSelf: false, content: "hi" }] as Message[];
+
+    const result = await evaluateInboundGate({
+      chatId,
+      chatName: "test",
+      isGroup: false,
+      unseen,
+      group: defaultGroup,
+      groupBuffers: new Map(),
+      chatCtx,
+      transcriptEntries: [],
+      mode: "full",
+      skipReplyGuard: true,
+    });
+
+    assert.equal(result.action, "discard");
+    if (result.action === "discard") {
+      assert.equal(result.reason, "agent_proxy_off");
+      assert.equal(result.shouldMarkSeen, true);
+    }
   });
 });

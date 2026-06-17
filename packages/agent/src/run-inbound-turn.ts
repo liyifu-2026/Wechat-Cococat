@@ -23,6 +23,7 @@ import {
   loadTranscript,
 } from "./transcript.js";
 import { shouldOffloadThoughtfulToOutbound } from "./thoughtful.js";
+import type { AgentHandoffTurnRef } from "./escalation/agent-handoff.js";
 import { isServicePersona } from "./style.js";
 
 export type InboundTurnRefs = {
@@ -33,6 +34,8 @@ export type InboundTurnRefs = {
   pendingAudiosRef: { current: MimoAudioInput[] };
   pendingVoiceCaptionRef: { current: boolean };
   stealthRetriedRef?: { current: boolean };
+  agentHandoffEnabled?: boolean;
+  handoffTurnRef?: AgentHandoffTurnRef;
 };
 
 export type RunInboundTurnParams = {
@@ -206,7 +209,12 @@ export async function runInboundTurn(
     pendingSystemRef: params.pendingSystemRef,
     pendingAudiosRef: params.pendingAudiosRef,
     pendingVoiceCaptionRef: params.pendingVoiceCaptionRef,
+    agentHandoffEnabled: params.agentHandoffEnabled,
   });
+
+  if (params.handoffTurnRef) {
+    params.handoffTurnRef.userLines = enriched.userLines;
+  }
 
   await runPromptTurn(enriched.prompt, enriched.images, {
     userLines: enriched.userLines,
@@ -291,7 +299,12 @@ export async function runThoughtfulInboundTurn(
     pendingSystemRef: params.pendingSystemRef,
     pendingAudiosRef: params.pendingAudiosRef,
     pendingVoiceCaptionRef: params.pendingVoiceCaptionRef,
+    agentHandoffEnabled: params.agentHandoffEnabled,
   });
+
+  if (params.handoffTurnRef) {
+    params.handoffTurnRef.userLines = enriched.userLines;
+  }
 
   await runThoughtfulTurn(enriched.prompt, enriched.images);
 

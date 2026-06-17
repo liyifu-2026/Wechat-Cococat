@@ -3,6 +3,11 @@ import type { WeChatClient } from "@cococat/shared";
 import type { SessionManager } from "../session.js";
 import type { OutboundJobData } from "../queue/queues.js";
 import { ensureThoughtfulOutboundJob } from "../queue/enqueue-thoughtful.js";
+import {
+  filterUnseenLocalIds,
+  markSeenLocalIds,
+  snapshotAlreadyAnswered,
+} from "../queue/snapshot-guard.js";
 import { drainThoughtfulPendingLocalIds } from "../queue/thoughtful-pending.js";
 import { getRedisConnection } from "../queue/redis.js";
 import { loadSchedulesFile } from "./registry.js";
@@ -45,8 +50,29 @@ export async function handleOutboundJob(
     if (userLocalIds.length === 0 && job.data.userLocalIds?.length) {
       userLocalIds = [...job.data.userLocalIds];
     }
+    userLocalIds = filterUnseenLocalIds(chatId, userLocalIds);
     if (userLocalIds.length === 0) {
       job.log("empty thoughtful snapshot");
+      await ensureThoughtfulOutboundJob({
+        chatId,
+        chatName: chatName ?? chatId,
+        isGroup: isGroup ?? chatId.includes("@chatroom"),
+        userLocalIds: [],
+        replyMentions,
+      });
+      return;
+    }
+
+    if (await snapshotAlreadyAnswered(client, chatId, userLocalIds)) {
+      markSeenLocalIds(chatId, userLocalIds);
+      job.log("thoughtful already answered; marked seen");
+      await ensureThoughtfulOutboundJob({
+        chatId,
+        chatName: chatName ?? chatId,
+        isGroup: isGroup ?? chatId.includes("@chatroom"),
+        userLocalIds: [],
+        replyMentions,
+      });
       return;
     }
 

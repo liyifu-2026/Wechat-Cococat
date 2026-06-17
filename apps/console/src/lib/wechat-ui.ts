@@ -14,21 +14,58 @@ export function chatDisplayName(chat: DriverChat): string {
 
 export function chatAvatarLetter(chat: DriverChat): string {
   const name = chatDisplayName(chat)
+  return chatAvatarLetterFromText(name)
+}
+
+export function chatAvatarLetterFromText(name: string): string {
   return name.slice(0, 1) || "?"
 }
 
-const AVATAR_CLASSES = [
-  "bg-[var(--wx-avatar-green)]",
-  "bg-[var(--wx-avatar-blue)]",
-  "bg-[var(--wx-avatar-orange)]",
+/** Format RFC3339 timestamp for bubble meta. */
+export function formatMessageTime(timestamp: string): string {
+  const d = Date.parse(timestamp)
+  if (Number.isNaN(d)) return timestamp
+  try {
+    return new Date(d).toLocaleString(undefined, {
+      month: "numeric",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    })
+  } catch {
+    return timestamp
+  }
+}
+
+const AVATAR_PALETTE = [
+  {
+    bg: "bg-[var(--wx-avatar-green)]",
+    text: "text-[var(--wx-avatar-on-green)]",
+  },
+  {
+    bg: "bg-[var(--wx-avatar-blue)]",
+    text: "text-[var(--wx-avatar-on-blue)]",
+  },
+  {
+    bg: "bg-[var(--wx-avatar-orange)]",
+    text: "text-[var(--wx-avatar-on-orange)]",
+  },
 ] as const
 
-export function chatAvatarClass(chatId: string): string {
+export function chatAvatarClass(colorKey: string): string {
+  const styles = chatAvatarStyles(colorKey)
+  return `${styles.bg} ${styles.text}`
+}
+
+export function chatAvatarStyles(colorKey: string): {
+  bg: string
+  text: string
+} {
   let hash = 0
-  for (let i = 0; i < chatId.length; i++) {
-    hash = (hash + chatId.charCodeAt(i)) % AVATAR_CLASSES.length
+  for (let i = 0; i < colorKey.length; i++) {
+    hash = (hash + colorKey.charCodeAt(i)) % AVATAR_PALETTE.length
   }
-  return AVATAR_CLASSES[hash] ?? AVATAR_CLASSES[0]
+  return AVATAR_PALETTE[hash] ?? AVATAR_PALETTE[0]
 }
 
 function escapeHtml(text: string): string {

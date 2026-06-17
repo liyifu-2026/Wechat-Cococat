@@ -1,38 +1,42 @@
-import {
-  decideCustomerEscalation,
-  decideCustomerEscalationRules,
-} from "./escalation/decision.js";
+import { decideCustomerEscalation } from "./escalation/decision.js";
 import { loadEscalationConfig } from "./escalation/config.js";
 import { loadChatEscalationState } from "./escalation/state-store.js";
-import type { ChatEscalationState, EscalationConfig, TriageAction } from "./escalation/types.js";
+import type { ExecutedAction } from "./escalation/triage-normalize.js";
+import type {
+  ChatEscalationState,
+  EscalationConfig,
+  GateAction,
+} from "./escalation/types.js";
 import { checkStealthText } from "./stealth-words.js";
 
 export type PreviewReplyResult = {
-  action: TriageAction;
+  /** Console 展示别名（reply / deflect / ignore / escalate_a / probe_b） */
+  action: string;
+  gate: GateAction;
+  executedAction: ExecutedAction;
   reason: string;
   answer: string;
   stealthOk: boolean;
   bannedHits: string[];
   confidence?: number;
-  source?: "rules" | "llm";
+  source?: "llm" | "fallback";
 };
 
 function resolvePreviewAnswer(
-  action: TriageAction,
-  config: EscalationConfig,
+  executed: ExecutedAction,
+  _config: EscalationConfig,
   query: string,
 ): string {
-  switch (action) {
-    case "deflect":
-      return config.deflectLine;
-    case "escalate_a":
-      return config.customerLine;
-    case "probe_b":
+  switch (executed) {
+    case "SEND_DEFLECT_LINE":
+    case "HANDOFF_ESCALATE":
+      return "（客户侧静默，不向客户发送自动消息）";
+    case "CODE_TRIGGERED_HANDOFF":
+    case "HANDOFF_PROBE":
       return "（不向客户发送消息，会话 mute）";
-    case "silent":
-    case "ignore":
+    case "NO_REPLY":
       return "（静默，不回复）";
-    case "reply":
+    case "CONTINUE_AGENT":
       if (/退款|退货/u.test(query)) {
         return "关于退款，我们一般会在 3-5 个工作日内原路退回。方便提供一下订单号吗？";
       }
@@ -59,7 +63,7 @@ export async function previewCustomerReply(params: {
     config,
   });
   const answer = resolvePreviewAnswer(
-    decision.action,
+    decision.executedAction,
     config,
     params.query,
   );
@@ -67,39 +71,13 @@ export async function previewCustomerReply(params: {
 
   return {
     action: decision.action,
+    gate: decision.gate,
+    executedAction: decision.executedAction,
     reason: decision.reason,
     answer,
     stealthOk: stealth.ok,
     bannedHits: stealth.hits,
     confidence: decision.confidence,
     source: decision.source,
-  };
-}
-
-/** @deprecated sync rules-only; prefer previewCustomerReply */
-export function previewCustomerReplyRules(params: {
-  query: string;
-  chatState?: ChatEscalationState;
-  config?: EscalationConfig;
-}): PreviewReplyResult {
-  const config = params.config ?? loadEscalationConfig();
-  const chatState = params.chatState ?? {
-    deflectSent: false,
-    probeStreak: 0,
-  };
-  const triage = decideCustomerEscalationRules({
-    combinedText: params.query.trim(),
-    chatState,
-    config,
-  });
-  const answer = resolvePreviewAnswer(triage.action, config, params.query);
-  const stealth = checkStealthText(answer);
-  return {
-    action: triage.action,
-    reason: triage.reason,
-    answer,
-    stealthOk: stealth.ok,
-    bannedHits: stealth.hits,
-    source: "rules",
   };
 }

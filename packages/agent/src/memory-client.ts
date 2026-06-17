@@ -76,6 +76,26 @@ export class MemoryClient {
     }
   }
 
+  /** Ops 只读窥视：固定宽泛 query，失败返回 undefined。 */
+  async recallForOps(sessionKey: string): Promise<string | undefined> {
+    try {
+      const res = await this.post<RecallResponse>(
+        "/recall",
+        {
+          query: "用户偏好 相处 习惯 重要事实",
+          session_key: sessionKey,
+        },
+        this.opts.recallTimeoutMs,
+      );
+      const ctx = res.context?.trim();
+      return ctx || undefined;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(`[pi-wechat] memory ops recall skipped: ${msg}`);
+      return undefined;
+    }
+  }
+
   /** recall → system 注入；超时/失败静默返回 undefined。 */
   async recall(sessionKey: string, query: string): Promise<string | undefined> {
     const q = query.trim();

@@ -25,13 +25,21 @@
     "./agent-scope": {
       "import": "./dist/agent-scope.js",
       "types": "./dist/agent-scope.d.ts"
+    },
+    "./model-capabilities": {
+      "import": "./dist/model-capabilities.js",
+      "types": "./dist/model-capabilities.d.ts"
+    },
+    "./llm-stack": {
+      "import": "./dist/llm-stack.js",
+      "types": "./dist/llm-stack.d.ts"
     }
   },
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
     "typecheck": "tsc --noEmit",
-    "test": "tsc && node --test dist/agent-scope.test.js"
+    "test": "tsc && node --test dist/agent-scope.test.js dist/llm-stack.test.js dist/model-capabilities.test.js"
   },
   "dependencies": {
     "@noble/hashes": "^1.8.0",

@@ -20,7 +20,7 @@ flowchart LR
 
 - **入站合流**：`SADD cococat:pending:{chatId}` + `queue.add(..., { jobId: chatId })`；BullMQ 无原生 debounce，靠 Redis SET 累积 localId。
 - **Drain**：`MULTI` 内 `SMEMBERS` + `DEL`（见 `queue/pending.ts`）。
-- **markSeen 铁律**：凡跳过 LLM 的路径（冷却、自说自话、群未 @ 缓冲、triage done、retry 已回复）**必须** markSeen，否则 monitor 无限 re-enqueue。
+- **markSeen 铁律**：凡跳过 LLM 的路径（冷却、群未 @ 缓冲、triage done、retry 已回复）**必须** markSeen，否则 monitor 无限 re-enqueue。
 
 ---
 
@@ -46,7 +46,7 @@ flowchart LR
 | `replyCooldownMs` | `30000` | 自动回复后冷却；`0` 关闭 |
 | `maxSendsPerTurn` | `1` | 每轮最多发送条数（硬限 5） |
 
-`reply-guard.ts`：冷却期内跳过（**被 @ 时不受冷却限制**）；transcript 尾部连续 4 条 assistant → 跳过（防自说自话）。
+`reply-guard.ts`：冷却期内跳过（**被 @ 时不受冷却限制**）。
 
 环境变量：`WECHAT_REPLY_COOLDOWN_MS` 可覆盖默认冷却。
 
@@ -145,7 +145,6 @@ Fast-discard 覆盖（均 markSeen）：
 | `muted_customer` | 私聊 escalation 静音 |
 | `group_buffer` | 群需 @ 但未 @ → 写入共享 `groupBuffers` |
 | `cooling_down` | 冷却期内且未 @ |
-| `self_talk` | transcript 尾部连续 assistant（读磁盘，不 hydrate） |
 
 同步路径（无队列）仍在 `session.processUnseen` 内跑完整分支 + `evaluateReplySkip`。
 

@@ -15,6 +15,7 @@ use crate::plans::send_message::{SendMessageParams, SendMessagePlan};
 use crate::tools::wechat_media::get_message_media;
 use crate::tools::wechat_artifacts::write_artifact;
 use crate::tools::wechat_messages;
+use crate::tools::client_msg_registry;
 
 #[derive(Deserialize)]
 pub struct ListParams {
@@ -22,10 +23,19 @@ pub struct ListParams {
     limit: i64,
     #[serde(default)]
     offset: i64,
+    #[serde(default)]
+    before_time: Option<i64>,
+    #[serde(default)]
+    after_time: Option<i64>,
 }
 
 fn default_limit() -> i64 {
     50
+}
+
+fn annotate_messages(ctx: &SessionCtx, chat_id: &str, messages: &mut Vec<Message>) {
+    client_msg_registry::resolve_pending_for_chat(&ctx.account_dir, &ctx.keys, chat_id);
+    client_msg_registry::attach_client_msg_ids(chat_id, messages);
 }
 
 pub async fn list_messages(
@@ -45,13 +55,67 @@ pub async fn list_messages(
         return Json(Vec::new());
     }
 
-    Json(wechat_messages::list_messages(
+    let mut messages = if let Some(before) = params.before_time {
+        wechat_messages::list_messages_before_time(
+            &ctx.account_dir,
+            &ctx.keys,
+            &chat_id,
+            before,
+            params.limit,
+        )
+    } else if let Some(after) = params.after_time {
+        wechat_messages::list_messages_after_time(
+            &ctx.account_dir,
+            &ctx.keys,
+            &chat_id,
+            after,
+            params.limit,
+        )
+    } else {
+        wechat_messages::list_messages(
+            &ctx.account_dir,
+            &ctx.keys,
+            &chat_id,
+            params.limit,
+            params.offset,
+        )
+    };
+    annotate_messages(&ctx, &chat_id, &mut messages);
+    Json(messages)
+}
+
+#[derive(Deserialize)]
+pub struct AroundParams {
+    #[serde(default = "default_limit")]
+    limit: i64,
+}
+
+pub async fn list_messages_around(
+    Path((chat_id, local_id)): Path<(String, i64)>,
+    Query(params): Query<AroundParams>,
+) -> Json<Vec<Message>> {
+    let ctx = match SessionCtx::load().await {
+        Ok(c) if c.is_logged_in() => c,
+        _ => return Json(Vec::new()),
+    };
+
+    if !ctx
+        .keys
+        .keys()
+        .any(|k| k.starts_with("message_") && k.ends_with(".db") && !k.contains("fts") && !k.contains("resource"))
+    {
+        return Json(Vec::new());
+    }
+
+    let mut messages = wechat_messages::list_messages_around(
         &ctx.account_dir,
         &ctx.keys,
         &chat_id,
+        local_id,
         params.limit,
-        params.offset,
-    ))
+    );
+    annotate_messages(&ctx, &chat_id, &mut messages);
+    Json(messages)
 }
 
 pub async fn get_media(Path((chat_id, local_id)): Path<(String, i64)>) -> Json<MediaResult> {
@@ -91,6 +155,8 @@ pub struct SendParams {
     file: Option<FileInput>,
     #[serde(default)]
     mentions: Vec<String>,
+    #[serde(rename = "clientMsgId")]
+    client_msg_id: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -205,6 +271,16 @@ pub async fn send_message(Json(input): Json<SendParams>) -> Json<SendResult> {
         }
     }
 
+    let chat_id = input.chat_id.clone();
+    let send_text = input.text.clone();
+    let client_msg_id = input.client_msg_id.clone();
+
+    if let (Some(ref id), Some(ref text)) = (&client_msg_id, &send_text) {
+        if !text.trim().is_empty() {
+            client_msg_registry::register_send(&chat_id, id, text);
+        }
+    }
+
     let mut context = {
         let db = get_db();
         create_context(ctx.session.clone(), &db)
@@ -233,8 +309,31 @@ pub async fn send_message(Json(input): Json<SendParams>) -> Json<SendResult> {
         let _ = std::fs::remove_file(p);
     }
 
+    if result.success {
+        if let (Some(ref id), Some(ref text)) = (&client_msg_id, &send_text) {
+            if !text.trim().is_empty() {
+                client_msg_registry::try_resolve_after_send(
+                    &ctx.account_dir,
+                    &ctx.keys,
+                    &chat_id,
+                    id,
+                    text,
+                );
+            }
+        }
+    }
+
     Json(SendResult {
         success: result.success,
-        error: result.error,
+        error: humanize_send_error(result.error),
     })
+}
+
+fn humanize_send_error(raw: Option<String>) -> Option<String> {
+    match raw.as_deref() {
+        Some("No action selected") => Some(
+            "无法在桌面微信执行发送：请确认微信窗口在「聊天」页、目标会话可打开，且底部有输入框（可在 Console 系统·微信连接查看界面）".to_string(),
+        ),
+        other => other.map(String::from),
+    }
 }

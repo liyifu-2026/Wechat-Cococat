@@ -442,6 +442,13 @@ fn subscription_event_to_login_event(event: SubscriptionEvent) -> LoginSubscript
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string()),
         },
+        "login_account" => LoginSubscriptionEvent::LoginAccount {
+            message: event
+                .data
+                .get("message")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string()),
+        },
         "login_success" => LoginSubscriptionEvent::LoginSuccess {
             user_id: event
                 .data

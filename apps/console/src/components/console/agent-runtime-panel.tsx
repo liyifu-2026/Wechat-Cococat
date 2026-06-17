@@ -226,22 +226,22 @@ export function AgentRuntimePanel({
           <div className="space-y-1">
             <Label>{t("console.agent.runtime.thoughtfulAck")}</Label>
             <select
-              className="w-full rounded-md border bg-background px-2 py-1.5 text-sm"
+              className="wx-themed-select w-full rounded-md border px-2 py-1.5 text-sm"
               value={thoughtfulAck}
               onChange={(e) =>
                 setThoughtfulAck(e.target.value as ThoughtfulAckGlobal)
               }
             >
-              <option value="off">{t("console.inbox.styleAckOff")}</option>
-              <option value="default">{t("console.inbox.styleAckDefault")}</option>
-              <option value="custom">{t("console.inbox.styleAckCustom")}</option>
+              <option value="off">{t("wechat.inbox.styleAckOff")}</option>
+              <option value="default">{t("wechat.inbox.styleAckDefault")}</option>
+              <option value="custom">{t("wechat.inbox.styleAckCustom")}</option>
             </select>
             {thoughtfulAck === "custom" && (
               <Input
                 className="mt-2"
                 value={thoughtfulAckCustom}
                 onChange={(e) => setThoughtfulAckCustom(e.target.value)}
-                placeholder={t("console.inbox.styleAckPlaceholder")}
+                placeholder={t("wechat.inbox.styleAckPlaceholder")}
               />
             )}
           </div>

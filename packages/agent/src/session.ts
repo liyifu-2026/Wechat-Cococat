@@ -16,6 +16,7 @@ import {
   resolveGroupPolicy,
 } from "./group-reply-policy.js";
 import { evaluateInboundGate } from "./inbound-gate.js";
+import { reconcileTranscriptForChat } from "./reconcile-transcript.js";
 import { finalizeInboundTurn, finalizeProactiveTurn } from "./finalize-inbound-turn.js";
 import { runInboundTurn, runThoughtfulInboundTurn } from "./run-inbound-turn.js";
 import { SeenStore } from "./seen.js";
@@ -54,9 +55,15 @@ import {
 } from "./agent-trace.js";
 import { ensureChatWikiAutoBound } from "./wiki-auto-bind.js";
 import { createWikiTools } from "./wiki-tools.js";
+import {
+  createAgentHandoffTools,
+  type AgentHandoffTurnRef,
+} from "./escalation/agent-handoff.js";
 import { isQueueEnabled } from "./queue/redis.js";
 import { cancelPendingOutboundForChat } from "./queue/cancel-pending-outbound.js";
 import { createScheduleTools } from "./schedule-tools.js";
+import { createContactProfileTools } from "./contact-profile-tools.js";
+import { resolveCustomerContextPrompt } from "./customer-context-prompt.js";
 import type { MimoAudioInput } from "./mimo-audio.js";
 import { applyPayloadHooks } from "./payload-hooks.js";
 import {
@@ -102,6 +109,11 @@ export class ChatSession {
   private gatherBlockSendRef = { current: false };
   private stealthRetriedRef = { current: false };
   private currentTurnId?: string;
+  private handoffTurnRef: AgentHandoffTurnRef = {
+    chatName: "",
+    userLines: [],
+    done: false,
+  };
 
   constructor(
     private client: WeChatClient,
@@ -135,6 +147,26 @@ export class ChatSession {
         ...createWikiTools(config.wikiClient, {
           chatId: chatCtx.chatId,
         }),
+      );
+    }
+
+    const isPrivateService =
+      !chatCtx.chatId.includes("@chatroom") &&
+      isServicePersona(chatCtx.style) &&
+      escalation?.isAgentHandoffEnabled();
+    if (isPrivateService && escalation) {
+      extraTools.push(
+        ...createAgentHandoffTools(
+          escalation,
+          chatCtx.chatId,
+          this.handoffTurnRef,
+        ),
+      );
+    }
+
+    if (isPrivateService) {
+      extraTools.push(
+        ...createContactProfileTools({ chatId: chatCtx.chatId }),
       );
     }
 
@@ -174,6 +206,12 @@ export class ChatSession {
           return {
             block: true,
             reason: "调研阶段不可发微信，请先整理要点。",
+          };
+        }
+        if (this.handoffTurnRef.done) {
+          return {
+            block: true,
+            reason: "本会话已转同事跟进，勿再发微信。",
           };
         }
         if (this.sendCountRef.current >= this.maxSendsPerTurn) {
@@ -303,6 +341,7 @@ export class ChatSession {
 
   async process(chatName: string, isGroup: boolean): Promise<void> {
     if (this.busy) return;
+    this.seenStore.reload();
     const messages = await this.client.listMessages(this.chatCtx.chatId, 40);
     const unseen = messages.filter(
       (m) => !m.isSelf && !this.seenStore.has(messageKey(m.localId)),
@@ -318,12 +357,17 @@ export class ChatSession {
     opts?: { replyGuardChecked?: boolean },
   ): Promise<void> {
     if (this.busy) return;
+    this.seenStore.reload();
     const idSet = new Set(snapshotLocalIds);
     const messages = await this.client.listMessages(this.chatCtx.chatId, 40);
-    let unseen = messages.filter(
+    const snapshotMsgs = messages.filter(
       (m) => !m.isSelf && idSet.has(m.localId),
     );
-    if (unseen.length === 0) {
+    let unseen = snapshotMsgs.filter(
+      (m) => !this.seenStore.has(messageKey(m.localId)),
+    );
+    // snapshot localId 在窗口里找不到时，才回退到「任意未 seen」
+    if (unseen.length === 0 && snapshotMsgs.length === 0) {
       unseen = messages.filter(
         (m) =>
           !m.isSelf && !this.seenStore.has(messageKey(m.localId)),
@@ -370,6 +414,9 @@ export class ChatSession {
           this.config.wikiClient?.getRegistry(),
         ),
         longTermMemory,
+        customerContextPrompt: isGroupChat
+          ? ""
+          : resolveCustomerContextPrompt(this.chatCtx.chatId),
       });
 
       this.sendCountRef.current = 0;
@@ -443,6 +490,15 @@ export class ChatSession {
         this.chatCtx.chatId,
         params.userLocalIds,
       );
+      this.handoffTurnRef.chatName = params.chatName;
+      this.handoffTurnRef.userLines = [];
+      this.handoffTurnRef.turnId = this.currentTurnId;
+      this.handoffTurnRef.done = false;
+
+      const agentHandoffEnabled =
+        !isGroupChat &&
+        isServicePersona(this.chatCtx.style) &&
+        (this.escalation?.isAgentHandoffEnabled() ?? false);
 
       const { userLines, sentTexts } = await runThoughtfulInboundTurn({
         client: this.client,
@@ -462,6 +518,8 @@ export class ChatSession {
         pendingVoiceCaptionRef: this.pendingVoiceCaptionRef,
         maxSendsPerTurn: this.maxSendsPerTurn,
         stealthRetriedRef: this.stealthRetriedRef,
+        agentHandoffEnabled,
+        handoffTurnRef: this.handoffTurnRef,
         runThoughtfulTurn: async (prompt, images) => {
           const thoughtful = await runThoughtfulTurn({
             agent: this.agent,
@@ -677,9 +735,40 @@ export class ChatSession {
             query: "memory_unavailable",
             detail: "await retry",
           });
+        } else if (earlyGate.reason === "agent_proxy_off") {
+          console.log(
+            `[pi-wechat] ${chatName}: agent proxy off — observe-only (${earlyGate.unseen.length} msg)`,
+          );
+          appendAgentTrace({
+            chatId: this.chatCtx.chatId,
+            chatName,
+            turnId: createTurnId(
+              this.chatCtx.chatId,
+              earlyGate.unseen.map((m) => m.localId),
+            ),
+            phase: "skip",
+            query: "agent_proxy_off",
+            detail: earlyGate.unseen
+              .map((m) => m.content?.trim() || `localId=${m.localId}`)
+              .join("\n"),
+          });
         }
         if (earlyGate.shouldMarkSeen) {
           this.markSeen(earlyGate.unseen);
+        }
+        if (earlyGate.reason === "agent_proxy_off") {
+          try {
+            await reconcileTranscriptForChat(
+              this.client,
+              this.chatCtx.chatId,
+              this.chatCtx.style.historyLimit,
+            );
+          } catch (err) {
+            console.warn(
+              `[pi-wechat] ${chatName}: reconcile after agent_proxy_off failed:`,
+              err instanceof Error ? err.message : err,
+            );
+          }
         }
         return;
       }
@@ -718,7 +807,6 @@ export class ChatSession {
         const skipReason = evaluateReplySkip({
           chatId: this.chatCtx.chatId,
           cooldownMs: replyCooldownMs(this.chatCtx.style.replyCooldownMs),
-          transcriptEntries: this.transcriptEntries,
           wasMentioned,
         });
         if (skipReason) {
@@ -746,6 +834,15 @@ export class ChatSession {
         unseen.map((m) => m.localId),
       );
       this.stealthRetriedRef.current = false;
+      this.handoffTurnRef.chatName = chatName;
+      this.handoffTurnRef.userLines = [];
+      this.handoffTurnRef.turnId = this.currentTurnId;
+      this.handoffTurnRef.done = false;
+
+      const agentHandoffEnabled =
+        !isGroupChat &&
+        isServicePersona(this.chatCtx.style) &&
+        (this.escalation?.isAgentHandoffEnabled() ?? false);
 
       const turnResult = await runInboundTurn({
         client: this.client,
@@ -768,6 +865,8 @@ export class ChatSession {
         pendingVoiceCaptionRef: this.pendingVoiceCaptionRef,
         maxSendsPerTurn: this.maxSendsPerTurn,
         stealthRetriedRef: this.stealthRetriedRef,
+        agentHandoffEnabled,
+        handoffTurnRef: this.handoffTurnRef,
         runPromptTurn: (prompt, images, opts) =>
           this.runPromptTurn(prompt, images, opts),
         traceReplySummary: (name) => this.traceReplySummary(name),
@@ -846,14 +945,37 @@ export class SessionManager {
     );
     if (unseen.length === 0) return;
 
+    const chatName =
+      this.escalation.config.maintainerDisplayName.trim() || "维护者";
+    const ctx = {
+      wikiEnabled: this.config.wikiEnabled,
+      wikiClient: this.config.wikiClient,
+      memoryClient: this.config.memoryClient,
+    };
+
+    const forAgent: number[] = [];
+
     for (const msg of unseen) {
       const text = msg.content?.trim() ?? "";
       if (text) {
-        await this.escalation.handleMaintainerMessage(text);
+        const outcome = await this.escalation.handleMaintainerMessage(
+          chatId,
+          text,
+          ctx,
+        );
+        if (outcome === "chat") {
+          forAgent.push(msg.localId);
+        }
       }
       seen.add(messageKey(msg.localId));
     }
     seen.persist();
+
+    if (forAgent.length === 0) return;
+
+    await this.get(chatId).processSnapshot(chatName, false, forAgent, {
+      replyGuardChecked: true,
+    });
   }
 
   get(chatId: string): ChatSession {

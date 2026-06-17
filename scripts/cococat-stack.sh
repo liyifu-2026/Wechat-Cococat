@@ -104,18 +104,76 @@ pid_alive() {
   [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null
 }
 
-status_driver() {
+_driver_api_up() {
   local token=""
   token="$(read_token 2>/dev/null || true)"
   local auth_header=()
   if [[ -n "$token" ]]; then
     auth_header=(-H "Authorization: Bearer $token")
   fi
-  if curl -sf "${auth_header[@]}" "${DRIVER_URL}/api/status" >/dev/null 2>&1; then
+  curl -sf "${auth_header[@]}" "${DRIVER_URL}/api/status" >/dev/null 2>&1
+}
+
+_wait_driver_api() {
+  local max="${1:-45}"
+  local i=0
+  while (( i < max )); do
+    if _driver_api_up; then
+      return 0
+    fi
+    sleep 1
+    i=$((i + 1))
+  done
+  return 1
+}
+
+_driver_container_id() {
+  with_docker docker ps -aq -f 'name=^agent-wechat$' 2>/dev/null | head -1 || true
+}
+
+_driver_container_running() {
+  local id
+  id="$(_driver_container_id)"
+  [[ -n "$id" ]] && with_docker docker ps -q --no-trunc -f "id=$id" 2>/dev/null | grep -q .
+}
+
+_redis_container_id() {
+  with_docker docker ps -aq -f 'name=^cococat-redis$' 2>/dev/null | head -1 || true
+}
+
+_ensure_redis_running() {
+  local id
+  id="$(_redis_container_id)"
+  if [[ -z "$id" ]]; then
+    return 1
+  fi
+  if with_docker docker ps -q --no-trunc -f "id=$id" 2>/dev/null | grep -q .; then
+    return 0
+  fi
+  echo "driver: starting existing container cococat-redis"
+  with_docker docker start cococat-redis
+}
+
+_start_existing_driver_containers() {
+  _ensure_redis_running || true
+  if [[ -z "$(_driver_container_id)" ]]; then
+    return 1
+  fi
+  if _driver_container_running; then
+    echo "driver: container agent-wechat already running"
+  else
+    echo "driver: starting existing container agent-wechat"
+    with_docker docker start agent-wechat
+  fi
+  return 0
+}
+
+status_driver() {
+  if _driver_api_up; then
     echo "driver: up ($DRIVER_URL)"
     return 0
   fi
-  if with_docker docker ps --format '{{.Names}}' 2>/dev/null | grep -qx 'agent-wechat'; then
+  if _driver_container_running; then
     echo "driver: container running but API unreachable ($DRIVER_URL)"
     return 1
   fi
@@ -166,6 +224,9 @@ _run_driver_up() {
   export AGENT_WECHAT_DATA_ROOT="$COCOCAT_DATA"
   export COCOCAT_CONFIG_DIR="$COCOCAT_CONFIG"
   cd "$REPO_ROOT"
+  if _start_existing_driver_containers; then
+    return 0
+  fi
   if command -v docker-compose >/dev/null 2>&1; then
     docker-compose up -d
   elif docker compose version >/dev/null 2>&1; then
@@ -191,6 +252,21 @@ start_driver() {
     chmod 600 "$COCOCAT_CONFIG/token"
   fi
   setup_path
+  if _driver_container_running; then
+    echo "driver: waiting for API..."
+    if _wait_driver_api 30; then
+      status_driver
+      return 0
+    fi
+    echo "driver: restarting container agent-wechat"
+    with_docker docker restart agent-wechat
+    if _wait_driver_api 45; then
+      status_driver
+      return 0
+    fi
+    echo "driver: API still unreachable ($DRIVER_URL)"
+    return 1
+  fi
   if docker_ok; then
     _run_driver_up
   else
@@ -199,7 +275,20 @@ start_driver() {
       export AGENT_WECHAT_DATA_ROOT='${COCOCAT_DATA//\'/\'\\\'\'}\''
       export COCOCAT_CONFIG_DIR='${COCOCAT_CONFIG//\'/\'\\\'\'}\''
       cd '${REPO_ROOT//\'/\'\\\'\'}\''
-      if command -v docker-compose >/dev/null 2>&1; then
+      agent_id=\$(docker ps -aq -f 'name=^agent-wechat$' 2>/dev/null | head -1 || true)
+      redis_id=\$(docker ps -aq -f 'name=^cococat-redis$' 2>/dev/null | head -1 || true)
+      if [[ -n \"\$redis_id\" ]] && ! docker ps -q --no-trunc -f \"id=\$redis_id\" 2>/dev/null | grep -q .; then
+        echo 'driver: starting existing container cococat-redis'
+        docker start cococat-redis
+      fi
+      if [[ -n \"\$agent_id\" ]]; then
+        if docker ps -q --no-trunc -f \"id=\$agent_id\" 2>/dev/null | grep -q .; then
+          echo 'driver: container agent-wechat already running'
+        else
+          echo 'driver: starting existing container agent-wechat'
+          docker start agent-wechat
+        fi
+      elif command -v docker-compose >/dev/null 2>&1; then
         docker-compose up -d
       elif docker compose version >/dev/null 2>&1; then
         docker compose up -d
@@ -212,8 +301,12 @@ start_driver() {
       fi
     "
   fi
-  sleep 2
-  status_driver
+  if _wait_driver_api 45; then
+    status_driver
+    return 0
+  fi
+  echo "driver: started but API not ready ($DRIVER_URL)"
+  return 1
 }
 
 stop_driver() {
@@ -262,6 +355,13 @@ start_agent() {
     set -a
     # shellcheck disable=SC1090
     source "$agent_env"
+    set +a
+  fi
+  local caption_env="$COCOCAT_CONFIG/caption.env"
+  if [[ -f "$caption_env" ]]; then
+    set -a
+    # shellcheck disable=SC1090
+    source "$caption_env"
     set +a
   fi
   export COCOCAT_CONFIG_DIR="$COCOCAT_CONFIG"

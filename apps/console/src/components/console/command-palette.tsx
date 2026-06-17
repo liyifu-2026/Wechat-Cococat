@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useTranslation } from "react-i18next"
 import {
   BookOpen,
+  Bot,
   Brain,
   Cat,
   Layers,
@@ -22,7 +23,7 @@ import {
 import { chatDisplayName } from "@/lib/wechat-ui"
 import { stackCommand } from "@/lib/stack-client"
 import { useToastStore } from "@/stores/toast-store"
-import { useConsoleStore, type ConsoleModule } from "@/stores/console-store"
+import { useConsoleStore } from "@/stores/console-store"
 type CommandItem = {
   id: string
   label: string
@@ -42,13 +43,14 @@ function matchesQuery(item: CommandItem, query: string): boolean {
 export function CommandPalette() {
   const { t } = useTranslation()
   const addToast = useToastStore((s) => s.addToast)
-  const setActiveModule = useConsoleStore((s) => s.setActiveModule)
+  const setActiveWechatTab = useConsoleStore((s) => s.setActiveWechatTab)
+  const navigateSystemWechat = useConsoleStore((s) => s.navigateSystemWechat)
+  const openSettingsModal = useConsoleStore((s) => s.openSettingsModal)
   const navigateBrain = useConsoleStore((s) => s.navigateBrain)
   const navigateInbox = useConsoleStore((s) => s.navigateInbox)
   const navigateInboxChat = useConsoleStore((s) => s.navigateInboxChat)
-  const navigateSystemWechat = useConsoleStore((s) => s.navigateSystemWechat)
-  const navigateStack = useConsoleStore((s) => s.navigateStack)
   const navigateSettings = useConsoleStore((s) => s.navigateSettings)
+  const navigateSystemModels = useConsoleStore((s) => s.navigateSystemModels)
 
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState("")
@@ -88,20 +90,38 @@ export function CommandPalette() {
   )
 
   const staticCommands = useMemo((): CommandItem[] => {
-    const module = (id: ConsoleModule, labelKey: string, icon: typeof Cat): CommandItem => ({
-      id: `module-${id}`,
+    const wechatTab = (
+      id: "chats" | "contacts",
+      labelKey: string,
+      icon: typeof Cat,
+    ): CommandItem => ({
+      id: `wechat-${id}`,
       label: t(labelKey),
       group: t("console.palette.groupModules"),
       keywords: id,
       icon,
-      run: runAndClose(() => setActiveModule(id)),
+      run: runAndClose(() => setActiveWechatTab(id)),
     })
 
     return [
-      module("overview", "console.modules.overview", Cat),
-      module("inbox", "console.modules.inbox", MessageCircle),
-      module("brain", "console.modules.brain", Brain),
-      module("system", "console.modules.system", Layers),
+      wechatTab("chats", "wechat.nav.chats", MessageCircle),
+      wechatTab("contacts", "wechat.nav.contacts", Cat),
+      {
+        id: "wechat-brain",
+        label: t("console.brain.title"),
+        group: t("console.palette.groupModules"),
+        keywords: "brain persona routing kb",
+        icon: Brain,
+        run: runAndClose(() => navigateBrain()),
+      },
+      {
+        id: "wechat-settings",
+        label: t("wechat.nav.settings"),
+        group: t("console.palette.groupModules"),
+        keywords: "settings gear",
+        icon: Palette,
+        run: runAndClose(() => openSettingsModal()),
+      },
       {
         id: "module-brain-kb",
         label: t("console.modules.wiki"),
@@ -170,27 +190,30 @@ export function CommandPalette() {
         id: "settings-cococat",
         label: t("console.palette.settingsCococat"),
         group: t("console.palette.groupSettings"),
-        keywords: "token path config",
+        keywords: "token path config program",
         icon: Cat,
-        run: runAndClose(() => navigateSettings("cococat", "agent-llm")),
+        run: runAndClose(() =>
+          openSettingsModal({ group: "system-advanced", tab: "about" }),
+        ),
       },
       {
-        id: "stack-services",
-        label: t("console.palette.openStackServices"),
-        group: t("console.palette.groupStack"),
-        keywords: "stack service health",
-        icon: Layers,
-        run: runAndClose(() => navigateStack("service")),
+        id: "settings-llm",
+        label: t("console.palette.settingsLlm"),
+        group: t("console.palette.groupSettings"),
+        keywords: "llm model mimo api agent 模型 厂商",
+        icon: Bot,
+        run: runAndClose(() => navigateSystemModels()),
       },
     ]
   }, [
     navigateSettings,
-    navigateStack,
+    navigateSystemModels,
     navigateSystemWechat,
+    openSettingsModal,
     navigateInbox,
     runAndClose,
     runStack,
-    setActiveModule,
+    setActiveWechatTab,
     navigateBrain,
     t,
   ])

@@ -73,6 +73,12 @@ const DEFAULT_CAPTION_SYNC_TIMEOUT_MS = Number(
   process.env.CAPTION_SYNC_TIMEOUT_MS ?? "8000",
 );
 
+const DEFAULT_VOICE_CAPTION_SYNC_TIMEOUT_MS = Number(
+  process.env.VOICE_CAPTION_SYNC_TIMEOUT_MS ??
+    process.env.CAPTION_SYNC_TIMEOUT_MS ??
+    "15000",
+);
+
 /** 同步返回已有/占位 caption；LLM 在后台异步升级。 */
 export function ensureCaptionSync(
   captionsDir: string,
@@ -91,7 +97,7 @@ export async function resolveVoiceCaptionSync(
   captionsDir: string,
   localId: number,
   audioDataUrl: string,
-  timeoutMs = DEFAULT_CAPTION_SYNC_TIMEOUT_MS,
+  timeoutMs = DEFAULT_VOICE_CAPTION_SYNC_TIMEOUT_MS,
 ): Promise<string> {
   const existing = readCaption(captionsDir, localId);
   if (existing && !isPlaceholder("voice", existing)) {
