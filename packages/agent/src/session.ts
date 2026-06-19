@@ -87,6 +87,171 @@ function resolveModel(provider: string, modelId: string) {
   return getModel(p, modelId as never);
 }
 
+type GateDiscardCtx = {
+  chatId: string;
+  chatName: string;
+  markSeen: (messages: Message[]) => void;
+  reconcileTranscript?: () => Promise<void>;
+};
+
+async function handleGateDiscard(
+  gate: { action: "discard"; reason: string; unseen: Message[]; shouldMarkSeen: boolean },
+  ctx: GateDiscardCtx,
+): Promise<void> {
+  if (gate.reason === "group_buffer") {
+    console.log(
+      `[pi-wechat] ${ctx.chatName}: buffered ${gate.unseen.length} group message(s) (mention required)`,
+    );
+    appendAgentTrace({
+      chatId: ctx.chatId,
+      chatName: ctx.chatName,
+      turnId: createTurnId(
+        ctx.chatId,
+        gate.unseen.map((m) => m.localId),
+      ),
+      phase: "buffer",
+      query: `+${gate.unseen.length} 条入 buffer`,
+      detail: gate.unseen
+        .map((m) => m.content?.trim() || `localId=${m.localId}`)
+        .join("\n"),
+    });
+  } else if (gate.reason === "triage_done") {
+    const previewLines = gate.unseen
+      .map((m) => m.content?.trim() ?? "")
+      .filter(Boolean);
+    appendAgentTrace({
+      chatId: ctx.chatId,
+      chatName: ctx.chatName,
+      turnId: createTurnId(
+        ctx.chatId,
+        gate.unseen.map((m) => m.localId),
+      ),
+      phase: "triage",
+      query: "done",
+      detail: previewLines.join("\n") || "(空)",
+    });
+  } else if (gate.reason === "memory_unavailable") {
+    console.warn(
+      `[pi-wechat] ${ctx.chatName}: Memory unavailable — suspend (no markSeen)`,
+    );
+    appendAgentTrace({
+      chatId: ctx.chatId,
+      chatName: ctx.chatName,
+      turnId: createTurnId(
+        ctx.chatId,
+        gate.unseen.map((m) => m.localId),
+      ),
+      phase: "skip",
+      query: "memory_unavailable",
+      detail: "await retry",
+    });
+  } else if (gate.reason === "agent_proxy_off") {
+    console.log(
+      `[pi-wechat] ${ctx.chatName}: agent proxy off — observe-only (${gate.unseen.length} msg)`,
+    );
+    appendAgentTrace({
+      chatId: ctx.chatId,
+      chatName: ctx.chatName,
+      turnId: createTurnId(
+        ctx.chatId,
+        gate.unseen.map((m) => m.localId),
+      ),
+      phase: "skip",
+      query: "agent_proxy_off",
+      detail: gate.unseen
+        .map((m) => m.content?.trim() || `localId=${m.localId}`)
+        .join("\n"),
+    });
+  }
+  if (gate.shouldMarkSeen) {
+    ctx.markSeen(gate.unseen);
+  }
+  if (gate.reason === "agent_proxy_off") {
+    try {
+      await ctx.reconcileTranscript?.();
+    } catch (err) {
+      console.warn(
+        `[pi-wechat] ${ctx.chatName}: reconcile after agent_proxy_off failed:`,
+        err instanceof Error ? err.message : err,
+      );
+    }
+  }
+}
+
+function logModelOutput(
+  agent: Agent,
+  chatId: string,
+  turnId: string | undefined,
+  chatName?: string,
+): void {
+  const thinking = extractAllThinking(agent);
+  if (thinking) {
+    appendAgentTrace({ chatId, chatName, turnId, phase: "thinking", detail: thinking });
+  }
+  const draft = extractAssistantDraft(agent);
+  if (draft) {
+    appendAgentTrace({ chatId, chatName, turnId, phase: "compose", detail: draft });
+  }
+}
+
+async function executePromptTurn(
+  deps: {
+    agent: Agent;
+    client: WeChatClient;
+    chatId: string;
+    style: ChatContext["style"];
+    turn: TurnRuntime;
+    queueEnabled: boolean;
+  },
+  prompt: string,
+  images: ImageContent[],
+  opts: {
+    forceThoughtful?: boolean;
+    userLines: string[];
+    chatName?: string;
+    /** outbound 主动任务等已在 outbound worker 内执行 thoughtful */
+    inlineThoughtfulOk?: boolean;
+  },
+): Promise<void> {
+  const useThoughtful =
+    opts.forceThoughtful === true ||
+    shouldUseThoughtful(deps.style, opts.userLines);
+
+  if (useThoughtful && deps.queueEnabled && !opts.inlineThoughtfulOk) {
+    throw new Error(
+      "[pi-wechat] thoughtful must run on outbound queue when enabled",
+    );
+  }
+
+  if (useThoughtful) {
+    const thoughtful = await runThoughtfulTurn({
+      agent: deps.agent,
+      client: deps.client,
+      chatId: deps.chatId,
+      chatName: opts.chatName,
+      turnId: deps.turn.currentTurnId,
+      style: deps.style,
+      userPrompt: prompt,
+      images,
+      gatherBlockSendRef: deps.turn.gatherBlockSendRef,
+      sendCountRef: deps.turn.sendCountRef,
+    });
+    logModelOutput(deps.agent, deps.chatId, deps.turn.currentTurnId, opts.chatName);
+    stripReasoningFromAgent(deps.agent);
+    if (thoughtful.ackLine) {
+      deps.turn.sentTextsRef.current.push(thoughtful.ackLine);
+    }
+    return;
+  }
+
+  if (images.length > 0) {
+    await deps.agent.prompt(prompt, images);
+  } else {
+    await deps.agent.prompt(prompt);
+  }
+  logModelOutput(deps.agent, deps.chatId, deps.turn.currentTurnId, opts.chatName);
+}
+
 export class ChatSession {
   private agent: Agent;
   private readonly turn = new TurnRuntime();
@@ -414,7 +579,14 @@ export class ChatSession {
 
       this.turn.resetOutbound();
 
-      await this.runPromptTurn(taskLine, [], {
+      await executePromptTurn({
+        agent: this.agent,
+        client: this.client,
+        chatId: this.chatCtx.chatId,
+        style: this.chatCtx.style,
+        turn: this.turn,
+        queueEnabled: this.config.queueEnabled,
+      }, taskLine, [], {
         forceThoughtful: params.thoughtful === true,
         userLines: [taskLine],
         chatName: params.chatName,
@@ -553,26 +725,7 @@ export class ChatSession {
   }
 
   private traceModelOutput(chatName?: string): void {
-    const thinking = extractAllThinking(this.agent);
-    if (thinking) {
-      appendAgentTrace({
-        chatId: this.chatCtx.chatId,
-        chatName,
-        turnId: this.turn.currentTurnId,
-        phase: "thinking",
-        detail: thinking,
-      });
-    }
-    const draft = extractAssistantDraft(this.agent);
-    if (draft) {
-      appendAgentTrace({
-        chatId: this.chatCtx.chatId,
-        chatName,
-        turnId: this.turn.currentTurnId,
-        phase: "compose",
-        detail: draft,
-      });
-    }
+    logModelOutput(this.agent, this.chatCtx.chatId, this.turn.currentTurnId, chatName);
   }
 
   private traceReplySummary(chatName?: string): void {
@@ -585,56 +738,6 @@ export class ChatSession {
       query: `${this.turn.sentTextsRef.current.length} 条`,
       detail: this.turn.sentTextsRef.current.join("\n---\n"),
     });
-  }
-
-  private async runPromptTurn(
-    prompt: string,
-    images: ImageContent[],
-    opts: {
-      forceThoughtful?: boolean;
-      userLines: string[];
-      chatName?: string;
-      /** outbound 主动任务等已在 outbound worker 内执行 thoughtful */
-      inlineThoughtfulOk?: boolean;
-    },
-  ): Promise<void> {
-    const useThoughtful =
-      opts.forceThoughtful === true ||
-      shouldUseThoughtful(this.chatCtx.style, opts.userLines);
-
-    if (useThoughtful && this.config.queueEnabled && !opts.inlineThoughtfulOk) {
-      throw new Error(
-        "[pi-wechat] thoughtful must run on outbound queue when enabled",
-      );
-    }
-
-    if (useThoughtful) {
-      const thoughtful = await runThoughtfulTurn({
-        agent: this.agent,
-        client: this.client,
-        chatId: this.chatCtx.chatId,
-        chatName: opts.chatName,
-        turnId: this.turn.currentTurnId,
-        style: this.chatCtx.style,
-        userPrompt: prompt,
-        images,
-        gatherBlockSendRef: this.turn.gatherBlockSendRef,
-        sendCountRef: this.turn.sendCountRef,
-      });
-      this.traceModelOutput(opts.chatName);
-      stripReasoningFromAgent(this.agent);
-      if (thoughtful.ackLine) {
-        this.turn.sentTextsRef.current.push(thoughtful.ackLine);
-      }
-      return;
-    }
-
-    if (images.length > 0) {
-      await this.agent.prompt(prompt, images);
-    } else {
-      await this.agent.prompt(prompt);
-    }
-    this.traceModelOutput(opts.chatName);
   }
 
   private async processUnseen(
@@ -666,88 +769,18 @@ export class ChatSession {
       });
 
       if (earlyGate.action === "discard") {
-        if (earlyGate.reason === "group_buffer") {
-          console.log(
-            `[pi-wechat] ${chatName}: buffered ${earlyGate.unseen.length} group message(s) (mention required)`,
-          );
-          appendAgentTrace({
-            chatId: this.chatCtx.chatId,
-            chatName,
-            turnId: createTurnId(
-              this.chatCtx.chatId,
-              earlyGate.unseen.map((m) => m.localId),
-            ),
-            phase: "buffer",
-            query: `+${earlyGate.unseen.length} 条入 buffer`,
-            detail: earlyGate.unseen
-              .map((m) => m.content?.trim() || `localId=${m.localId}`)
-              .join("\n"),
-          });
-        } else if (earlyGate.reason === "triage_done") {
-          const previewLines = earlyGate.unseen
-            .map((m) => m.content?.trim() ?? "")
-            .filter(Boolean);
-          appendAgentTrace({
-            chatId: this.chatCtx.chatId,
-            chatName,
-            turnId: createTurnId(
-              this.chatCtx.chatId,
-              earlyGate.unseen.map((m) => m.localId),
-            ),
-            phase: "triage",
-            query: "done",
-            detail: previewLines.join("\n") || "(空)",
-          });
-        } else if (earlyGate.reason === "memory_unavailable") {
-          console.warn(
-            `[pi-wechat] ${chatName}: Memory unavailable — suspend (no markSeen)`,
-          );
-          appendAgentTrace({
-            chatId: this.chatCtx.chatId,
-            chatName,
-            turnId: createTurnId(
-              this.chatCtx.chatId,
-              earlyGate.unseen.map((m) => m.localId),
-            ),
-            phase: "skip",
-            query: "memory_unavailable",
-            detail: "await retry",
-          });
-        } else if (earlyGate.reason === "agent_proxy_off") {
-          console.log(
-            `[pi-wechat] ${chatName}: agent proxy off — observe-only (${earlyGate.unseen.length} msg)`,
-          );
-          appendAgentTrace({
-            chatId: this.chatCtx.chatId,
-            chatName,
-            turnId: createTurnId(
-              this.chatCtx.chatId,
-              earlyGate.unseen.map((m) => m.localId),
-            ),
-            phase: "skip",
-            query: "agent_proxy_off",
-            detail: earlyGate.unseen
-              .map((m) => m.content?.trim() || `localId=${m.localId}`)
-              .join("\n"),
-          });
-        }
-        if (earlyGate.shouldMarkSeen) {
-          this.markSeen(earlyGate.unseen);
-        }
-        if (earlyGate.reason === "agent_proxy_off") {
-          try {
+        await handleGateDiscard(earlyGate, {
+          chatId: this.chatCtx.chatId,
+          chatName,
+          markSeen: (msgs) => this.markSeen(msgs),
+          reconcileTranscript: async () => {
             await reconcileTranscriptForChat(
               this.client,
               this.chatCtx.chatId,
               this.chatCtx.style.historyLimit,
             );
-          } catch (err) {
-            console.warn(
-              `[pi-wechat] ${chatName}: reconcile after agent_proxy_off failed:`,
-              err instanceof Error ? err.message : err,
-            );
-          }
-        }
+          },
+        });
         return;
       }
 
@@ -838,7 +871,14 @@ export class ChatSession {
         turn: this.turn,
         agentHandoffEnabled,
         runPromptTurn: (prompt, images, opts) =>
-          this.runPromptTurn(prompt, images, opts),
+          executePromptTurn({
+            agent: this.agent,
+            client: this.client,
+            chatId: this.chatCtx.chatId,
+            style: this.chatCtx.style,
+            turn: this.turn,
+            queueEnabled: this.config.queueEnabled,
+          }, prompt, images, opts),
         traceReplySummary: (name) => this.traceReplySummary(name),
       });
 
