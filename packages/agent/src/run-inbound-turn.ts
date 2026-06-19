@@ -4,7 +4,6 @@ import type { Message, WeChatClient } from "@cococat/shared";
 import type { PiWeChatConfig } from "./config.js";
 import { updateChatMeta, type ChatContext } from "./chat-store.js";
 import { appendAgentTrace } from "./agent-trace.js";
-import type { MimoAudioInput } from "./mimo-audio.js";
 import { stripReasoningFromAgent } from "./reasoning.js";
 import { sendAssistantTextFallback } from "./reply.js";
 import {
@@ -23,20 +22,8 @@ import {
   loadTranscript,
 } from "./transcript.js";
 import { shouldOffloadThoughtfulToOutbound } from "./thoughtful.js";
-import type { AgentHandoffTurnRef } from "./escalation/agent-handoff.js";
 import { isServicePersona } from "./style.js";
-
-export type InboundTurnRefs = {
-  sendCountRef: { current: number };
-  sentTextsRef: { current: string[] };
-  replyMentionsRef: { current: string[] | undefined };
-  pendingSystemRef: { current: string };
-  pendingAudiosRef: { current: MimoAudioInput[] };
-  pendingVoiceCaptionRef: { current: boolean };
-  stealthRetriedRef?: { current: boolean };
-  agentHandoffEnabled?: boolean;
-  handoffTurnRef?: AgentHandoffTurnRef;
-};
+import { type TurnRuntime } from "./turn-runtime.js";
 
 export type RunInboundTurnParams = {
   client: WeChatClient;
@@ -52,6 +39,8 @@ export type RunInboundTurnParams = {
   turnId: string;
   groupBuffers: Map<string, Message[]>;
   maxSendsPerTurn: number;
+  turn: TurnRuntime;
+  agentHandoffEnabled?: boolean;
   runPromptTurn: (
     prompt: string,
     images: ImageContent[],
@@ -61,7 +50,7 @@ export type RunInboundTurnParams = {
     },
   ) => Promise<void>;
   traceReplySummary: (chatName: string) => void;
-} & InboundTurnRefs;
+};
 
 export type RunInboundTurnResult =
   | { status: "thoughtful_offloaded" }
@@ -78,26 +67,14 @@ export type RunThoughtfulInboundTurnParams = {
   turnId: string;
   replyMentions?: string[];
   maxSendsPerTurn: number;
+  turn: TurnRuntime;
+  agentHandoffEnabled?: boolean;
   runThoughtfulTurn: (
     prompt: string,
     images: ImageContent[],
   ) => Promise<void>;
   traceReplySummary: (chatName: string) => void;
-} & InboundTurnRefs;
-
-function resetTurnRefs(
-  refs: InboundTurnRefs,
-  isGroupChat: boolean,
-  unseen: Message[],
-  groupPolicy: GroupPolicy,
-  replyMentions?: string[],
-): void {
-  refs.sendCountRef.current = 0;
-  refs.sentTextsRef.current = [];
-  refs.replyMentionsRef.current =
-    replyMentions ??
-    buildOutboundMentions(isGroupChat, unseen, groupPolicy);
-}
+};
 
 /** Gate 之后：enrich → thoughtful offload 或 prompt → send。 */
 export async function runInboundTurn(
@@ -117,15 +94,21 @@ export async function runInboundTurn(
     turnId,
     groupBuffers,
     maxSendsPerTurn,
+    turn,
     runPromptTurn,
     traceReplySummary,
   } = params;
 
-  resetTurnRefs(params, isGroupChat, unseen, groupPolicy);
+  turn.resetOutbound();
+  turn.replyMentionsRef.current = buildOutboundMentions(
+    isGroupChat,
+    unseen,
+    groupPolicy,
+  );
 
-  if (params.replyMentionsRef.current) {
+  if (turn.replyMentionsRef.current) {
     console.log(
-      `[pi-wechat] ${chatName}: reply mentions ${params.replyMentionsRef.current.join(", ")}`,
+      `[pi-wechat] ${chatName}: reply mentions ${turn.replyMentionsRef.current.join(", ")}`,
     );
   }
 
@@ -171,7 +154,7 @@ export async function runInboundTurn(
       chatName,
       isGroup: isGroupChat,
       userLocalIds: unseen.map((m) => m.localId),
-      replyMentions: params.replyMentionsRef.current,
+      replyMentions: turn.replyMentionsRef.current,
     });
 
     const limit = chatCtx.style.historyLimit ?? config.historyLimit;
@@ -206,14 +189,14 @@ export async function runInboundTurn(
     userLines: enriched.userLines,
     audios: enriched.audios,
     hasVoiceWithCaption: enriched.hasVoiceWithCaption,
-    pendingSystemRef: params.pendingSystemRef,
-    pendingAudiosRef: params.pendingAudiosRef,
-    pendingVoiceCaptionRef: params.pendingVoiceCaptionRef,
+    pendingSystemRef: turn.pendingSystemRef,
+    pendingAudiosRef: turn.pendingAudiosRef,
+    pendingVoiceCaptionRef: turn.pendingVoiceCaptionRef,
     agentHandoffEnabled: params.agentHandoffEnabled,
   });
 
-  if (params.handoffTurnRef) {
-    params.handoffTurnRef.userLines = enriched.userLines;
+  if (turn.handoffTurnRef) {
+    turn.handoffTurnRef.userLines = enriched.userLines;
   }
 
   await runPromptTurn(enriched.prompt, enriched.images, {
@@ -227,22 +210,22 @@ export async function runInboundTurn(
     agent,
     client,
     chatCtx.chatId,
-    params.sendCountRef.current,
-    params.replyMentionsRef.current,
+    turn.sendCountRef.current,
+    turn.replyMentionsRef.current,
     chatCtx.style.burstDelayMs,
     maxSendsPerTurn,
     {
       serviceStealthEnabled: isServicePersona(chatCtx.style),
-      stealthRetriedRef: params.stealthRetriedRef,
+      stealthRetriedRef: turn.stealthRetriedRef,
     },
   );
-  params.sentTextsRef.current.push(...fallbackSent);
+  turn.sentTextsRef.current.push(...fallbackSent);
   traceReplySummary(chatName);
 
   return {
     status: "completed",
     userLines: enriched.userLines,
-    sentTexts: params.sentTextsRef.current,
+    sentTexts: turn.sentTextsRef.current,
   };
 }
 
@@ -260,13 +243,13 @@ export async function runThoughtfulInboundTurn(
     unseen,
     turnId,
     maxSendsPerTurn,
+    turn,
     runThoughtfulTurn,
     traceReplySummary,
   } = params;
 
-  params.sendCountRef.current = 0;
-  params.sentTextsRef.current = [];
-  params.replyMentionsRef.current = params.replyMentions;
+  turn.resetOutbound();
+  turn.replyMentionsRef.current = params.replyMentions;
 
   const enriched = await enrichInboundMessages({
     client,
@@ -296,14 +279,14 @@ export async function runThoughtfulInboundTurn(
     userLines: enriched.userLines,
     audios: enriched.audios,
     hasVoiceWithCaption: enriched.hasVoiceWithCaption,
-    pendingSystemRef: params.pendingSystemRef,
-    pendingAudiosRef: params.pendingAudiosRef,
-    pendingVoiceCaptionRef: params.pendingVoiceCaptionRef,
+    pendingSystemRef: turn.pendingSystemRef,
+    pendingAudiosRef: turn.pendingAudiosRef,
+    pendingVoiceCaptionRef: turn.pendingVoiceCaptionRef,
     agentHandoffEnabled: params.agentHandoffEnabled,
   });
 
-  if (params.handoffTurnRef) {
-    params.handoffTurnRef.userLines = enriched.userLines;
+  if (turn.handoffTurnRef) {
+    turn.handoffTurnRef.userLines = enriched.userLines;
   }
 
   await runThoughtfulTurn(enriched.prompt, enriched.images);
@@ -314,20 +297,20 @@ export async function runThoughtfulInboundTurn(
     agent,
     client,
     chatCtx.chatId,
-    params.sendCountRef.current,
-    params.replyMentionsRef.current,
+    turn.sendCountRef.current,
+    turn.replyMentionsRef.current,
     chatCtx.style.burstDelayMs,
     maxSendsPerTurn,
     {
       serviceStealthEnabled: isServicePersona(chatCtx.style),
-      stealthRetriedRef: params.stealthRetriedRef,
+      stealthRetriedRef: turn.stealthRetriedRef,
     },
   );
-  params.sentTextsRef.current.push(...fallbackSent);
+  turn.sentTextsRef.current.push(...fallbackSent);
   traceReplySummary(chatName);
 
   return {
     userLines: enriched.userLines,
-    sentTexts: params.sentTextsRef.current,
+    sentTexts: turn.sentTextsRef.current,
   };
 }

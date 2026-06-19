@@ -1,0 +1,14 @@
+pub mod a11y;
+pub mod avatar_proxy;
+pub mod chat_select;
+pub mod client_msg_registry;
+pub mod exec;
+pub mod qr;
+pub mod screenshot;
+pub mod wechat_artifacts;
+pub mod wechat_chats;
+pub mod wechat_contacts;
+pub mod wechat_db;
+pub mod wechat_keys;
+pub mod wechat_media;
+pub mod wechat_messages;
