@@ -79,10 +79,18 @@ function runModuleMigration(): void {
   }
 }
 
-runModuleMigration()
-migrateSystemLayoutV2()
-migrateSystemPanelSplit()
-migrateWechatShellLayout()
+function runStartupMigration(name: string, fn: () => void): void {
+  try {
+    fn()
+  } catch (err) {
+    console.error(`Console startup migration failed: ${name}`, err)
+  }
+}
+
+runStartupMigration("module", runModuleMigration)
+runStartupMigration("system-layout-v2", migrateSystemLayoutV2)
+runStartupMigration("system-panel-split", migrateSystemPanelSplit)
+runStartupMigration("wechat-shell-layout", migrateWechatShellLayout)
 
 export type OpenSettingsModalOptions = {
   group?: WechatSettingsGroup
@@ -175,7 +183,11 @@ function persistModule(module: ConsoleModule) {
 }
 
 async function navigateWithWikiFlush(action: () => void): Promise<void> {
-  await wikiSaveRegistry.flushAll()
+  try {
+    await wikiSaveRegistry.flushAll()
+  } catch (err) {
+    console.error("Wiki flush failed before navigation:", err)
+  }
   action()
 }
 

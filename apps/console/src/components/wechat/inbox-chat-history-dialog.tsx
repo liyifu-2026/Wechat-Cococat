@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type MouseEvent } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import { ImageIcon, Search } from "lucide-react"
 import { useTranslation } from "react-i18next"
 import {
@@ -27,8 +27,8 @@ import {
 } from "@/hooks/use-message-media-cache"
 import {
   pruneVoiceTranscriptCacheForChat,
-  useVoiceTranscript,
 } from "@/hooks/use-voice-transcript"
+import { VoiceMessageBubble } from "@/components/console/voice-message-bubble"
 
 type InboxChatHistoryDialogProps = {
   open: boolean
@@ -183,33 +183,25 @@ function HistoryVoiceRow({
     message.localId,
     message.mediaKind === "voice",
   )
-  const src = media?.type === "voice" ? mediaDataUrl(media) : null
-  const { state, transcribe } = useVoiceTranscript(chat.id, message.localId)
-
-  const handleTranscribe = useCallback(
-    (e: MouseEvent) => {
-      e.stopPropagation()
-      if (!src) return
-      void transcribe(src)
-    },
-    [src, transcribe],
-  )
 
   return (
-    <button
-      type="button"
+    <div
       onClick={onClick}
+      role="button"
+      tabIndex={0}
       className="flex w-full flex-col gap-2 rounded-lg border border-[var(--wx-border)] bg-[var(--wx-search-input)] p-3 text-left transition hover:bg-[var(--wx-list-hover)]"
     >
       <HistorySenderMeta chat={chat} message={message} />
-      {src ? (
-        <audio
-          controls
-          preload="metadata"
-          className="max-w-full"
-          src={src}
-          onClick={(e) => e.stopPropagation()}
-        />
+      {media?.type === "voice" ? (
+        <div onClick={(e) => e.stopPropagation()}>
+          <VoiceMessageBubble
+            chatId={chat.id}
+            localId={message.localId}
+            media={media}
+            fallbackLabel={t("wechat.inbox.mediaVoice")}
+            isSelf={Boolean(message.isSelf)}
+          />
+        </div>
       ) : (
         <span className="text-sm text-[var(--wx-muted)]">
           {loading
@@ -217,28 +209,7 @@ function HistoryVoiceRow({
             : t("wechat.inbox.mediaVoice")}
         </span>
       )}
-      {src && (
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            className="text-xs text-[var(--wx-accent)] hover:underline disabled:opacity-50"
-            disabled={state.status === "loading"}
-            onClick={handleTranscribe}
-          >
-            {state.status === "loading"
-              ? t("wechat.inbox.voiceTranscribing")
-              : t("wechat.inbox.voiceTranscribe")}
-          </button>
-        </div>
-      )}
-      {(state.status === "done" || state.status === "error") && (
-        <p className="whitespace-pre-wrap break-words text-xs text-[var(--wx-text)]">
-          {state.status === "done"
-            ? state.text
-            : t("wechat.inbox.voiceTranscribeFailed")}
-        </p>
-      )}
-    </button>
+    </div>
   )
 }
 

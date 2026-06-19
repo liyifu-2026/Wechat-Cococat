@@ -77,7 +77,11 @@ function readScopeFile(projectId: string): CachedScope | null {
     const scope = JSON.parse(raw) as WikiScope;
     if (!scope.purpose || !Array.isArray(scope.tags)) return null;
     return { scope, mtimeMs: stat.mtimeMs };
-  } catch {
+  } catch (err) {
+    console.warn(
+      `[pi-wechat] failed to read wiki scope ${filePath}:`,
+      err instanceof Error ? err.message : err,
+    );
     return null;
   }
 }
@@ -114,7 +118,11 @@ export class WikiContextManager {
       if (!loaded) return null;
       this.memoryCache.set(alias, loaded);
       return loaded.scope;
-    } catch {
+    } catch (err) {
+      console.warn(
+        `[pi-wechat] failed to resolve wiki scope cache for ${alias}:`,
+        err instanceof Error ? err.message : err,
+      );
       return null;
     }
   }

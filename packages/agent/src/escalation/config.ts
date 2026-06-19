@@ -131,7 +131,11 @@ export function loadEscalationConfigCached(): EscalationConfig {
 
   try {
     return loadFromRaw(readFileSync(path, "utf8"));
-  } catch {
+  } catch (err) {
+    console.warn(
+      "[pi-wechat] failed to load cached escalation config; reloading defaults:",
+      err instanceof Error ? err.message : err,
+    );
     return loadEscalationConfig();
   }
 }

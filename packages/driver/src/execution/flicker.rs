@@ -18,7 +18,9 @@ impl FlickeringDetector {
     }
 
     pub fn record_transitions(&mut self, effects: &[Effect]) -> Option<Effect> {
-        let has_transition = effects.iter().any(|e| matches!(e, Effect::ViewTransition { .. }));
+        let has_transition = effects
+            .iter()
+            .any(|e| matches!(e, Effect::ViewTransition { .. }));
         if !has_transition {
             return None;
         }
@@ -27,7 +29,12 @@ impl FlickeringDetector {
         self.timestamps.push_back(now);
 
         let cutoff = now - FLICKER_WINDOW;
-        while self.timestamps.front().map(|t| *t < cutoff).unwrap_or(false) {
+        while self
+            .timestamps
+            .front()
+            .map(|t| *t < cutoff)
+            .unwrap_or(false)
+        {
             self.timestamps.pop_front();
         }
 
@@ -37,8 +44,7 @@ impl FlickeringDetector {
             return Some(Effect::Fatal {
                 reason: format!(
                     "view flickering detected: {} transitions in {:?}",
-                    count,
-                    FLICKER_WINDOW,
+                    count, FLICKER_WINDOW,
                 ),
             });
         }

@@ -28,7 +28,11 @@ export function handleUpstreamResponseLine(raw: string): boolean {
   let parsed: { id?: number; result?: unknown; error?: string | null };
   try {
     parsed = JSON.parse(raw) as { id?: number; result?: unknown; error?: string | null };
-  } catch {
+  } catch (err) {
+    console.warn(
+      "[pi-wechat] wiki upstream response parse failed:",
+      err instanceof Error ? err.message : err,
+    );
     return false;
   }
   if (typeof parsed.id !== "number") return false;

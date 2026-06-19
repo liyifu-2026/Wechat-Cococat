@@ -64,8 +64,14 @@ pub fn build_router() -> Router {
         // Interact (RPA)
         .route("/api/interact/click", post(interact::click_at))
         // Sessions
-        .route("/api/sessions", get(sessions::list_sessions).post(sessions::create_session))
-        .route("/api/sessions/{id}", get(sessions::get_session).delete(sessions::delete_session))
+        .route(
+            "/api/sessions",
+            get(sessions::list_sessions).post(sessions::create_session),
+        )
+        .route(
+            "/api/sessions/{id}",
+            get(sessions::get_session).delete(sessions::delete_session),
+        )
         .route("/api/sessions/{id}/start", post(sessions::start_session))
         .route("/api/sessions/{id}/stop", post(sessions::stop_session))
         // WebSocket for login subscription

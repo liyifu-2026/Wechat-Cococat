@@ -37,7 +37,11 @@ export function parseChatProfileRaw(raw: string): ChatProfileFile {
           ? null
           : undefined;
     return { tags, userType };
-  } catch {
+  } catch (err) {
+    console.warn(
+      "[pi-wechat] failed to parse chat profile; resetting tags:",
+      err instanceof Error ? err.message : err,
+    );
     return { tags: [] };
   }
 }

@@ -70,10 +70,12 @@ pub async fn get_contact(Path(username): Path<String>) -> Json<Option<Contact>> 
 #[derive(Deserialize)]
 pub struct AvatarParams {
     url: String,
+    #[serde(default)]
+    refresh: bool,
 }
 
 pub async fn proxy_avatar(Query(params): Query<AvatarParams>) -> Response {
-    match avatar_proxy::fetch_avatar(&params.url).await {
+    match avatar_proxy::fetch_avatar_with_options(&params.url, params.refresh).await {
         Ok((bytes, content_type)) => (
             StatusCode::OK,
             [(header::CONTENT_TYPE, content_type)],

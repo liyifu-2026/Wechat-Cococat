@@ -1,5 +1,21 @@
 import type { DriverMessage } from "@/lib/driver-client"
 
+export function messageIdentityKey(
+  message: DriverMessage,
+  fallbackChatId?: string,
+): string {
+  if (message.clientMsgId) return `client:${message.clientMsgId}`
+  const chatId = message.chatId?.trim() || fallbackChatId?.trim() || ""
+  return `${chatId}:${message.localId}`
+}
+
+export function messagesForChat(
+  chatId: string,
+  messages: DriverMessage[],
+): DriverMessage[] {
+  return messages.filter((m) => !m.chatId || m.chatId === chatId)
+}
+
 export function messageUnix(m: DriverMessage): number {
   const t = Date.parse(m.timestamp ?? "")
   return Number.isNaN(t) ? 0 : Math.floor(t / 1000)
@@ -28,10 +44,11 @@ export function newestMessageUnix(messages: DriverMessage[]): number | null {
 export function mergeUniqueMessagesDesc(
   primary: DriverMessage[],
   extra: DriverMessage[],
+  chatId?: string,
 ): DriverMessage[] {
-  const byId = new Map<number, DriverMessage>()
+  const byId = new Map<string, DriverMessage>()
   for (const m of [...primary, ...extra]) {
-    if (m.localId != null) byId.set(m.localId, m)
+    if (m.localId != null) byId.set(messageIdentityKey(m, chatId), m)
   }
   return [...byId.values()].sort((a, b) => messageUnix(b) - messageUnix(a))
 }

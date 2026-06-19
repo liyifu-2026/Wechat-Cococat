@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react"
 import { useVisibilityGatedInterval } from "@/hooks/use-visibility-gated-interval"
 import { readConfigFile, writeConfigFile } from "@/lib/agent-config-client"
+import { sendDriverMessage } from "@/lib/driver-client"
 import {
   applyAllRegisteredWikiToChat,
   ensureMaintainerCustomerType,
@@ -14,6 +15,17 @@ import {
 import { patchChatProfile } from "@/lib/inbox-profile"
 
 const POLL_MS = 30_000
+
+function formatMaintainerWelcomeMenu(): string {
+  return [
+    "【维护菜单】",
+    "你已设为维护人",
+    "列表·看客户",
+    "已处理·解除",
+    "菜单·本帮助",
+    "记忆·查客户",
+  ].join("\n")
+}
 
 export function useMaintainers() {
   const [maintainers, setMaintainers] = useState<MaintainerInfo[]>([])
@@ -74,6 +86,13 @@ export function useMaintainers() {
         userType: MAINTAINER_CUSTOMER_TYPE_ID,
       }).catch(() => {})
       await applyAllRegisteredWikiToChat(chatId).catch(() => {})
+      const sent = await sendDriverMessage({
+        chatId,
+        text: formatMaintainerWelcomeMenu(),
+      })
+      if (!sent.success) {
+        throw new Error(sent.error ?? "failed to send maintainer menu")
+      }
     },
     [maintainers, persist],
   )

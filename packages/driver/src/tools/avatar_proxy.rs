@@ -26,6 +26,13 @@ fn is_allowed_avatar_url(url: &str) -> bool {
 }
 
 pub async fn fetch_avatar(url: &str) -> Result<(Vec<u8>, String), String> {
+    fetch_avatar_with_options(url, false).await
+}
+
+pub async fn fetch_avatar_with_options(
+    url: &str,
+    force_refresh: bool,
+) -> Result<(Vec<u8>, String), String> {
     let url = url.trim();
     if url.is_empty() {
         return Err("empty url".to_string());
@@ -34,7 +41,7 @@ pub async fn fetch_avatar(url: &str) -> Result<(Vec<u8>, String), String> {
         return Err("avatar url not allowed".to_string());
     }
 
-    {
+    if !force_refresh {
         let guard = cache();
         if let Some(map) = guard.as_ref() {
             if let Some(entry) = map.get(url) {
@@ -48,6 +55,7 @@ pub async fn fetch_avatar(url: &str) -> Result<(Vec<u8>, String), String> {
     let client = reqwest::Client::builder()
         .user_agent("Mozilla/5.0 (compatible; CocoCat-Driver/1.0)")
         .timeout(Duration::from_secs(15))
+        .no_proxy()
         .build()
         .map_err(|e| format!("http client: {e}"))?;
 

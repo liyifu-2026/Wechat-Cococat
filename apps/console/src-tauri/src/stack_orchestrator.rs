@@ -323,7 +323,11 @@ impl StackOrchestrator {
         }
 
         if !driver_api_up() {
-            return Err("agent: driver not up — start driver first".into());
+            // Driver may be slow to respond after container start —
+            // give it a short grace window instead of failing immediately.
+            if !wait_driver_api(15) {
+                return Err("agent: driver not up — start driver first".into());
+            }
         }
 
         let token = stack::read_cococat_token()?;

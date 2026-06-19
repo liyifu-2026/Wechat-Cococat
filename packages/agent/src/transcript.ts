@@ -63,7 +63,11 @@ export function loadTranscript(path: string): TranscriptEntry[] {
         (e as TranscriptEntry).role !== undefined &&
         typeof (e as TranscriptEntry).text === "string",
     );
-  } catch {
+  } catch (err) {
+    console.warn(
+      `[pi-wechat] failed to load transcript ${path}; context will be empty:`,
+      err instanceof Error ? err.message : err,
+    );
     return [];
   }
 }

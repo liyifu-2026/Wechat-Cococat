@@ -5,12 +5,19 @@ use axum::{
 };
 use futures::{SinkExt, StreamExt};
 
+fn default_websockify_port() -> u16 {
+    crate::sessions::manager::get_session("default")
+        .and_then(|s| u16::try_from(s.vnc_port).ok())
+        .unwrap_or(6080)
+}
+
 /// Proxy a noVNC WebSocket connection to the local websockify instance.
 /// Auth is enforced by the middleware layer before this handler runs.
 pub async fn vnc_ws(ws: WebSocketUpgrade) -> impl IntoResponse {
     // noVNC requires the "binary" subprotocol — must echo it back or the client drops the connection
+    let port = default_websockify_port();
     ws.protocols(["binary"])
-        .on_upgrade(|socket| handle_vnc_ws(socket, 6080))
+        .on_upgrade(move |socket| handle_vnc_ws(socket, port))
 }
 
 async fn handle_vnc_ws(ws: WebSocket, websockify_port: u16) {
@@ -31,8 +38,12 @@ async fn handle_vnc_ws(ws: WebSocket, websockify_port: u16) {
     let client_to_upstream = async {
         while let Some(Ok(msg)) = ws_rx.next().await {
             let tung_msg = match msg {
-                Message::Binary(data) => tokio_tungstenite::tungstenite::Message::Binary(data.into()),
-                Message::Text(text) => tokio_tungstenite::tungstenite::Message::Text(text.as_str().into()),
+                Message::Binary(data) => {
+                    tokio_tungstenite::tungstenite::Message::Binary(data.into())
+                }
+                Message::Text(text) => {
+                    tokio_tungstenite::tungstenite::Message::Text(text.as_str().into())
+                }
                 Message::Ping(data) => tokio_tungstenite::tungstenite::Message::Ping(data.into()),
                 Message::Pong(data) => tokio_tungstenite::tungstenite::Message::Pong(data.into()),
                 Message::Close(_) => break,
@@ -47,8 +58,12 @@ async fn handle_vnc_ws(ws: WebSocket, websockify_port: u16) {
     let upstream_to_client = async {
         while let Some(Ok(msg)) = up_rx.next().await {
             let axum_msg = match msg {
-                tokio_tungstenite::tungstenite::Message::Binary(data) => Message::Binary(data.into()),
-                tokio_tungstenite::tungstenite::Message::Text(text) => Message::Text(text.as_str().into()),
+                tokio_tungstenite::tungstenite::Message::Binary(data) => {
+                    Message::Binary(data.into())
+                }
+                tokio_tungstenite::tungstenite::Message::Text(text) => {
+                    Message::Text(text.as_str().into())
+                }
                 tokio_tungstenite::tungstenite::Message::Ping(data) => Message::Ping(data.into()),
                 tokio_tungstenite::tungstenite::Message::Pong(data) => Message::Pong(data.into()),
                 tokio_tungstenite::tungstenite::Message::Close(_) => break,

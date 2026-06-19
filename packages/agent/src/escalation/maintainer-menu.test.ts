@@ -1,10 +1,24 @@
 import assert from "node:assert/strict";
-import { describe, test } from "node:test";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, test } from "node:test";
 import {
   formatMaintainerBlockedChat,
   formatMaintainerMenu,
 } from "./maintainer-menu.js";
 import { assertAllLinesWithinMax } from "./wechat-line-wrap.test.js";
+
+const prevData = process.env.COCOCAT_DATA_DIR;
+
+beforeEach(() => {
+  process.env.COCOCAT_DATA_DIR = mkdtempSync(join(tmpdir(), "cococat-menu-"));
+});
+
+afterEach(() => {
+  if (prevData === undefined) delete process.env.COCOCAT_DATA_DIR;
+  else process.env.COCOCAT_DATA_DIR = prevData;
+});
 
 describe("formatMaintainerMenu", () => {
   test("compact menu with short lines", () => {

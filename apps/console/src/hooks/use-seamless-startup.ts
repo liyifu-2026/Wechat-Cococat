@@ -33,6 +33,13 @@ export type SeamlessStartupState = {
   completeLogin: () => void
 }
 
+export function isWechatSessionReady(auth: {
+  status?: string
+  chatsReady?: boolean
+}): boolean {
+  return auth.status === "logged_in" && auth.chatsReady === true
+}
+
 export function useSeamlessStartup(): SeamlessStartupState {
   const { t } = useTranslation()
   const [phase, setPhase] = useState<SeamlessStartupPhase>("booting")
@@ -40,13 +47,6 @@ export function useSeamlessStartup(): SeamlessStartupState {
   const [bootStatus, setBootStatus] = useState<string | null>(null)
   const [loggedIn, setLoggedIn] = useState(false)
   const runIdRef = useRef(0)
-
-  const completeLogin = useCallback(() => {
-    setLoggedIn(true)
-    setPhase("ready")
-    setErrorMessage(null)
-    setBootStatus(null)
-  }, [])
 
   const runBoot = useCallback(async () => {
     const runId = ++runIdRef.current
@@ -89,11 +89,16 @@ export function useSeamlessStartup(): SeamlessStartupState {
 
       try {
         const auth = await fetchDriverSessionAuth()
-        if (auth.status === "logged_in") {
+        if (isWechatSessionReady(auth)) {
           setLoggedIn(true)
           setPhase("ready")
           setBootStatus(null)
           return
+        }
+        if (auth.status === "logged_in") {
+          setLoggedIn(true)
+          setPhase("booting")
+          setBootStatus(t("wechat.startup.waitingWechat"))
         }
         if (auth.status === "logged_out") {
           setLoggedIn(false)
@@ -118,6 +123,10 @@ export function useSeamlessStartup(): SeamlessStartupState {
     setPhase("error")
     setErrorMessage(t("wechat.startup.timeout"))
   }, [t])
+
+  const completeLogin = useCallback(() => {
+    void runBoot()
+  }, [runBoot])
 
   useEffect(() => {
     void runBoot()

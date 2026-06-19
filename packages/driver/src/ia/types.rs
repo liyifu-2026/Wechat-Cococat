@@ -56,7 +56,7 @@ pub enum Action {
     #[serde(rename = "type_text")]
     Type {
         text: String,
-    
+
         selector: Option<String>,
     },
     #[serde(rename = "key")]
@@ -64,11 +64,11 @@ pub enum Action {
     #[serde(rename = "scroll")]
     Scroll {
         direction: ScrollDirection,
-    
+
         x: Option<f64>,
-    
+
         y: Option<f64>,
-    
+
         amount: Option<i32>,
     },
     #[serde(rename = "wait")]
@@ -174,7 +174,6 @@ pub enum PopupType {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ContactCardState {
-
     pub wechat_id: Option<String>,
 
     pub contact_name: Option<String>,
@@ -279,7 +278,9 @@ pub struct IdentifiedStates {
 // ============================================
 
 pub enum Effect {
-    Emit { event: SubscriptionEvent },
+    Emit {
+        event: SubscriptionEvent,
+    },
     UpdateSessionLoginState,
     PopupAppeared {
         popup_type: PopupType,
@@ -416,7 +417,6 @@ pub struct Contact {
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct ReplyInfo {
-
     #[ts(optional)]
     pub sender: Option<String>,
     pub content: String,
@@ -472,7 +472,6 @@ pub struct Message {
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct SettingsState {
-
     #[ts(optional)]
     pub logout_button_bounds: Option<Bounds>,
 
@@ -501,30 +500,25 @@ pub enum LoginSubscriptionEvent {
         #[serde(rename = "qrData")]
         qr_data: String,
         #[serde(rename = "qrBinaryData")]
-    
         #[ts(optional, type = "number[]")]
         qr_binary_data: Option<Vec<u8>>,
         #[serde(rename = "qrDataUrl")]
-    
         #[ts(optional)]
         qr_data_url: Option<String>,
     },
     #[serde(rename = "phone_confirm")]
     PhoneConfirm {
-    
         #[ts(optional)]
         message: Option<String>,
     },
     #[serde(rename = "login_account")]
     LoginAccount {
-    
         #[ts(optional)]
         message: Option<String>,
     },
     #[serde(rename = "login_success")]
     LoginSuccess {
         #[serde(rename = "userId")]
-    
         #[ts(optional)]
         user_id: Option<String>,
     },

@@ -40,15 +40,25 @@ impl Context {
     /// Save context to database.
     pub fn save(&self, conn: &Connection) {
         if let Ok(json) = serde_json::to_string(&self.state) {
-            conn.execute(
+            if let Err(e) = conn.execute(
                 "INSERT INTO context (session_id, app_state, updated_at)
                  VALUES (?1, ?2, datetime('now'))
                  ON CONFLICT(session_id) DO UPDATE SET
                    app_state = excluded.app_state,
                    updated_at = datetime('now')",
                 params![self.session_id, json],
-            )
-            .ok();
+            ) {
+                tracing::error!(
+                    "[context] failed to save app_state for session {}: {}",
+                    self.session_id,
+                    e
+                );
+            }
+        } else {
+            tracing::error!(
+                "[context] failed to serialize app_state for session {}",
+                self.session_id
+            );
         }
     }
 }

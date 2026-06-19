@@ -1,4 +1,4 @@
-import { useCallback } from "react"
+import { useCallback, useMemo } from "react"
 import type { MouseEvent } from "react"
 import { MessageCircle, Users, BookOpen } from "lucide-react"
 import { useTranslation } from "react-i18next"
@@ -39,9 +39,17 @@ export function WechatNavRail() {
   const setActiveWechatTab = useConsoleStore((s) => s.setActiveWechatTab)
   const navigateSystemWechat = useConsoleStore((s) => s.navigateSystemWechat)
   const navigateInbox = useConsoleStore((s) => s.navigateInbox)
-  const muteChatIds = useInboxMuteStore((s) => s.mutes.map((m) => m.chat_id))
-  const unreadChatIds = useInboxUnreadStore((s) => s.unreadChatIds)
-  const chatAttentionCount = countInboxAttentionChats(muteChatIds, unreadChatIds)
+  const navigateInboxChat = useConsoleStore((s) => s.navigateInboxChat)
+  const mutes = useInboxMuteStore((s) => s.mutes)
+  const muteChatIds = useMemo(() => mutes.map((m) => m.chat_id), [mutes])
+  const unreadCountsByChatId = useInboxUnreadStore(
+    (s) => s.unreadCountsByChatId,
+  )
+  const nextUnreadChatId = useInboxUnreadStore((s) => s.nextUnreadChatId)
+  const chatAttentionCount = countInboxAttentionChats(
+    muteChatIds,
+    unreadCountsByChatId,
+  )
   const kbAttentionCount = useKbAttentionCount()
 
   function chatsHealth(): ServiceHealth | null {
@@ -55,6 +63,17 @@ export function WechatNavRail() {
     if (tab === "chats") {
       navigateInbox("chats")
     }
+  }
+
+  function handleChatTabDoubleClick(e: MouseEvent) {
+    e.preventDefault()
+    e.stopPropagation()
+    const chatId = nextUnreadChatId()
+    if (chatId) {
+      navigateInboxChat(chatId)
+      return
+    }
+    handleSelect("chats")
   }
 
   function handleHealthClick(e: MouseEvent, dot: ServiceHealth) {
@@ -100,6 +119,9 @@ export function WechatNavRail() {
                 <div className="relative">
                   <TooltipTrigger
                     onClick={() => handleSelect(id)}
+                    onDoubleClick={
+                      id === "chats" ? handleChatTabDoubleClick : undefined
+                    }
                     className={`flex h-11 w-11 items-center justify-center rounded-xl transition-colors ${
                       active
                         ? "bg-[var(--wechat-brand-muted)] text-[var(--wechat-brand)]"
@@ -110,7 +132,7 @@ export function WechatNavRail() {
                   </TooltipTrigger>
                   {showTodoBadge && (
                     <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-[var(--wx-warn-badge)] px-1 text-[10px] font-semibold text-white">
-                      {badgeCount > 9 ? "9+" : badgeCount}
+                      {badgeCount > 99 ? "99+" : badgeCount}
                     </span>
                   )}
                   {showHealth && (

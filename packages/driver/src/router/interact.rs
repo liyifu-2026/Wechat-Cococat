@@ -29,7 +29,10 @@ pub async fn click_at(Json(req): Json<ClickRequest>) -> (StatusCode, Json<ClickR
         0 => (StatusCode::OK, Json(ClickResponse { success: true })),
         _ => {
             tracing::error!("[interact] click failed: {}", result.stderr);
-            (StatusCode::INTERNAL_SERVER_ERROR, Json(ClickResponse { success: false }))
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ClickResponse { success: false }),
+            )
         }
     }
 }

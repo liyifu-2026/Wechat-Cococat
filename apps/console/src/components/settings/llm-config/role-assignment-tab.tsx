@@ -287,6 +287,12 @@ export function RoleAssignmentTab({
 
           const binding = stack.roles[row.role];
           const resolved = resolveRole(stack, row.role);
+          const supportsRole = row.filterRole
+            ? modelSupportsRole(
+                resolveModelCapabilities(resolved.model),
+                row.filterRole,
+              )
+            : true;
           const customProviderId =
             binding.mode === "custom" ? binding.providerId : chat.providerId;
 
@@ -351,10 +357,25 @@ export function RoleAssignmentTab({
               </div>
               {row.role === "wikiIngestCaption" && (
                 <>
+                  <div
+                    className={`rounded-md border px-3 py-2 text-xs ${
+                      supportsRole
+                        ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+                        : "border-amber-500/40 bg-amber-500/10 text-amber-800 dark:text-amber-200"
+                    }`}
+                  >
+                    {t(
+                      supportsRole
+                        ? "settings.sections.llmConfig.roles.wikiIngestVisionSupported"
+                        : "settings.sections.llmConfig.roles.wikiIngestVisionUnsupported",
+                      { model: resolved.model },
+                    )}
+                  </div>
                   <label className="flex items-center gap-2 text-sm">
                     <input
                       type="checkbox"
-                      checked={binding.enabled !== false}
+                      checked={binding.enabled !== false && supportsRole}
+                      disabled={!supportsRole}
                       onChange={(e) =>
                         setBinding(row.role, {
                           ...binding,

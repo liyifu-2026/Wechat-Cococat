@@ -38,15 +38,46 @@ fn is_system_account(username: &str) -> bool {
     SYSTEM_USERNAMES.contains(&username)
 }
 
+const AVATAR_URL_COLUMNS: &[&str] = &[
+    "small_head_url",
+    "small_head_img_url",
+    "small_head_image_url",
+    "smallHeadUrl",
+    "head_url",
+    "head_img_url",
+    "headimgurl",
+    "avatar_url",
+];
+
+fn quote_ident(name: &str) -> String {
+    format!("\"{}\"", name.replace('"', "\"\""))
+}
+
+fn contact_table_columns(account_dir: &str, contact_key: &str) -> Vec<String> {
+    let contact_db = get_db_path(account_dir, "contact.db");
+    query_wechat_db(&contact_db, contact_key, "PRAGMA table_info(contact);")
+        .iter()
+        .filter_map(|row| row.get("name").and_then(|v| v.as_str()).map(str::to_string))
+        .collect()
+}
+
+pub(crate) fn contact_select_projection(account_dir: &str, contact_key: &str) -> String {
+    let columns = contact_table_columns(account_dir, contact_key);
+    let avatar_expr = AVATAR_URL_COLUMNS
+        .iter()
+        .find(|candidate| columns.iter().any(|c| c == **candidate))
+        .map(|name| format!("{} AS small_head_url", quote_ident(name)))
+        .unwrap_or_else(|| "NULL AS small_head_url".to_string());
+
+    format!("username, nick_name, remark, alias, {avatar_expr}, local_type")
+}
+
 fn row_to_contact(row: &serde_json::Value) -> Option<Contact> {
     let username = row.get("username")?.as_str()?;
     if is_system_account(username) {
         return None;
     }
-    let local_type = row
-        .get("local_type")
-        .and_then(|v| v.as_i64())
-        .unwrap_or(3);
+    let local_type = row.get("local_type").and_then(|v| v.as_i64()).unwrap_or(3);
     Some(Contact {
         username: username.to_string(),
         nick_name: row
@@ -86,10 +117,11 @@ pub fn get_contact_by_username(
         &contact_db,
         contact_key,
         &format!(
-            "SELECT username, nick_name, remark, alias, small_head_url, local_type
+            "SELECT {}
              FROM contact
              WHERE username = '{escaped}'
-             LIMIT 1;"
+             LIMIT 1;",
+            contact_select_projection(account_dir, contact_key),
         ),
     );
     rows.first().and_then(row_to_contact)
@@ -116,12 +148,13 @@ pub fn list_contacts(
         &contact_db,
         contact_key,
         &format!(
-            "SELECT username, nick_name, remark, alias, small_head_url, local_type
+            "SELECT {}
              FROM contact
              WHERE local_type IN (1, 3, 5)
                AND username NOT LIKE '%@chatroom'
              ORDER BY remark != '' DESC, nick_name COLLATE NOCASE ASC
-             LIMIT {limit} OFFSET {offset};"
+             LIMIT {limit} OFFSET {offset};",
+            contact_select_projection(account_dir, contact_key),
         ),
     );
 
@@ -132,10 +165,7 @@ pub fn list_contacts(
                 return None;
             }
 
-            let local_type = row
-                .get("local_type")
-                .and_then(|v| v.as_i64())
-                .unwrap_or(3);
+            let local_type = row.get("local_type").and_then(|v| v.as_i64()).unwrap_or(3);
 
             Some(Contact {
                 username: username.to_string(),
@@ -183,7 +213,7 @@ pub fn find_contacts(
         &contact_db,
         contact_key,
         &format!(
-            "SELECT username, nick_name, remark, alias, small_head_url, local_type
+            "SELECT {}
              FROM contact
              WHERE local_type IN (1, 3, 5)
                AND username NOT LIKE '%@chatroom'
@@ -192,7 +222,8 @@ pub fn find_contacts(
                     OR alias LIKE '%{escaped}%'
                     OR username LIKE '%{escaped}%')
              ORDER BY remark != '' DESC, nick_name COLLATE NOCASE ASC
-             LIMIT 50;"
+             LIMIT 50;",
+            contact_select_projection(account_dir, contact_key),
         ),
     );
 
@@ -203,10 +234,7 @@ pub fn find_contacts(
                 return None;
             }
 
-            let local_type = row
-                .get("local_type")
-                .and_then(|v| v.as_i64())
-                .unwrap_or(3);
+            let local_type = row.get("local_type").and_then(|v| v.as_i64()).unwrap_or(3);
 
             Some(Contact {
                 username: username.to_string(),

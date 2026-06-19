@@ -45,6 +45,8 @@ FROM ubuntu:22.04
 ARG HTTP_PROXY
 ARG HTTPS_PROXY
 ARG APT_MIRROR=mirrors.aliyun.com
+# Only set proxy for the apt install step; clear afterwards to avoid
+# polluting the runtime environment (e.g. breaking localhost VNC WebSocket).
 ENV http_proxy=$HTTP_PROXY https_proxy=$HTTPS_PROXY \
     HTTP_PROXY=$HTTP_PROXY HTTPS_PROXY=$HTTPS_PROXY
 ENV DEBIAN_FRONTEND=noninteractive
@@ -87,6 +89,9 @@ RUN if [ -n "$APT_MIRROR" ]; then \
     # Python packages for tools
     python3-pip \
     && rm -rf /var/lib/apt/lists/*
+
+# Clear build-time proxy env vars so they don't leak into the runtime image
+ENV http_proxy="" https_proxy="" HTTP_PROXY="" HTTPS_PROXY=""
 
 # ============================================
 # Python packages

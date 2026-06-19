@@ -29,7 +29,7 @@ export type EscalationConfigFile = {
 export const DEFAULT_ESCALATION: EscalationConfigFile = {
   maintainer: { chatId: "", displayName: "" },
   maintainers: [],
-  notifyOn: { escalate: true, probeLoop: true, lowConfidence: false },
+  notifyOn: { escalate: true, probeLoop: true, lowConfidence: true },
   triage: { useLlm: true },
   lowConfidenceThreshold: 0.45,
   deflectLine: "您好，这边是 CocoCat 客服，请问有什么可以帮您？",
@@ -103,7 +103,7 @@ export function parseEscalationConfig(raw: string): EscalationConfigFile {
     notifyOn: {
       escalate: parsed.notifyOn?.escalate !== false,
       probeLoop: parsed.notifyOn?.probeLoop !== false,
-      lowConfidence: parsed.notifyOn?.lowConfidence === true,
+      lowConfidence: parsed.notifyOn?.lowConfidence !== false,
     },
     triage: { useLlm: parsed.triage?.useLlm === true },
     lowConfidenceThreshold:

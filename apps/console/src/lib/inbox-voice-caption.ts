@@ -3,10 +3,28 @@ import { getHttpFetch } from "@/lib/tauri-fetch"
 
 const VOICE_CAPTION_PROMPT =
   "只输出这段语音的中文转写，一行以内。不要解释、不要推理过程。"
+const VOICE_CAPTION_TIMEOUT_MS = 30_000
 
 type ChatCompletionMessage = {
   content?: string
   reasoning_content?: string
+}
+
+function withCaptionTimeout<T>(
+  work: (signal: AbortSignal) => Promise<T>,
+): Promise<T> {
+  const controller = new AbortController()
+  let timeoutId: ReturnType<typeof setTimeout> | undefined
+  const timeout = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(() => {
+      controller.abort()
+      reject(new Error("CAPTION_TIMEOUT"))
+    }, VOICE_CAPTION_TIMEOUT_MS)
+  })
+
+  return Promise.race([work(controller.signal), timeout]).finally(() => {
+    if (timeoutId) clearTimeout(timeoutId)
+  })
 }
 
 function extractCaptionText(
@@ -50,27 +68,30 @@ export async function captionInboxVoiceFromStack(
   }
 
   const httpFetch = await getHttpFetch()
-  const resp = await httpFetch(`${config.apiUrl}/chat/completions`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${config.apiKey}`,
-    },
-    body: JSON.stringify({
-      model: config.model,
-      messages: [
-        {
-          role: "user",
-          content: [
-            { type: "input_audio", input_audio: { data: audioDataUrl } },
-            { type: "text", text: VOICE_CAPTION_PROMPT },
-          ],
-        },
-      ],
-      max_tokens: 256,
-      temperature: 0.2,
+  const resp = await withCaptionTimeout((signal) =>
+    httpFetch(`${config.apiUrl}/chat/completions`, {
+      method: "POST",
+      signal,
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${config.apiKey}`,
+      },
+      body: JSON.stringify({
+        model: config.model,
+        messages: [
+          {
+            role: "user",
+            content: [
+              { type: "input_audio", input_audio: { data: audioDataUrl } },
+              { type: "text", text: VOICE_CAPTION_PROMPT },
+            ],
+          },
+        ],
+        max_tokens: 256,
+        temperature: 0.2,
+      }),
     }),
-  })
+  )
 
   if (!resp.ok) {
     const text = await resp.text().catch(() => "")

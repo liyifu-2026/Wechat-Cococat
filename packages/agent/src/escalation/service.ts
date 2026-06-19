@@ -10,51 +10,38 @@ import {
 import { enqueueSend } from "./send-queue.js";
 import {
   isChatMuted,
-  listActiveMutes,
   loadChatEscalationState,
-  loadMaintainerPending,
-  maintainerMemoryPickTtlMs,
   muteChat,
   saveChatEscalationState,
   saveMaintainerPending,
-  unmuteChat,
 } from "./state-store.js";
 import { decideCustomerEscalation } from "./decision.js";
 import { downgradeExecutedWhenEscalationDisabled } from "./triage-normalize.js";
 import { nextChatStateAfterExecuted } from "./triage-state.js";
 import type { ExecutedAction } from "./triage-normalize.js";
 import {
-  formatMaintainerBlockedChat,
-  formatMaintainerMenu,
-} from "./maintainer-menu.js";
-import {
   formatAgentHandoffAlert,
   formatEscalationAlert,
   formatLowConfidenceFyi,
-  formatMuteListMessage,
-  formatNoMutesToClear,
-  formatUnmutePickPrompt,
-  formatMaintainerActionBroadcast,
 } from "./maintainer-notify.js";
+import { formatMaintainerMenu } from "./maintainer-menu.js";
 import { formatWechatText } from "./wechat-line-wrap.js";
 import type { MaintainerMessageOutcome } from "./types.js";
 import type {
   EscalationConfig,
+  MaintainerInfo,
   PrivateTriageOutcome,
 } from "./types.js";
 import type { TranscriptEntry } from "../transcript.js";
-import {
-  tryMaintainerWikiOpsReply,
-} from "../ops/wiki-sniff.js";
-import {
-  formatMemoryPickList,
-  formatMemorySnapshot,
-  parseMaintainerMemoryCommand,
-  resolveMemoryTarget,
-} from "../ops/memory-peek.js";
-import { pickMaintainerCandidate } from "../ops/pick-candidate.js";
 import type { MemoryClient } from "../memory-client.js";
 import type { WikiClient } from "../wiki-client.js";
+import {
+  createMemoryMaintainerCommandHandler,
+  createMuteMaintainerCommandHandler,
+  createWikiMaintainerCommandHandler,
+  dispatchMaintainerCommand,
+  type MaintainerCommandHandler,
+} from "./maintainer-command-handler.js";
 
 function combinedText(messages: Message[]): string {
   return messages
@@ -66,6 +53,7 @@ function combinedText(messages: Message[]): string {
 export class EscalationService {
   private _config: EscalationConfig;
   private readonly configFrozen: boolean;
+  private readonly maintainerCommandHandlers: MaintainerCommandHandler[];
 
   constructor(
     private client: WeChatClient,
@@ -73,6 +61,11 @@ export class EscalationService {
   ) {
     this.configFrozen = config !== undefined;
     this._config = config ?? loadEscalationConfigCached();
+    this.maintainerCommandHandlers = [
+      createWikiMaintainerCommandHandler(),
+      createMemoryMaintainerCommandHandler(),
+      createMuteMaintainerCommandHandler(),
+    ];
   }
 
   get config(): EscalationConfig {
@@ -84,6 +77,7 @@ export class EscalationService {
     if (this.configFrozen) return;
 
     const prevIdentity = maintainerIdentity(this._config);
+    const prevMaintainers = this._config.maintainers;
     this._config = loadEscalationConfigCached();
     const nextIdentity = maintainerIdentity(this._config);
     if (prevIdentity === nextIdentity) return;
@@ -95,6 +89,7 @@ export class EscalationService {
     console.log(
       `[pi-wechat] escalation: maintainer set changed (${count} configured)`,
     );
+    void this.notifyNewMaintainers(prevMaintainers, this._config.maintainers);
   }
 
   isEnabled(): boolean {
@@ -130,8 +125,14 @@ export class EscalationService {
   }
 
   private async resolveAllMaintainerChatIds(): Promise<string[]> {
+    return this.resolveMaintainerChatIdsFrom(this.config.maintainers);
+  }
+
+  private async resolveMaintainerChatIdsFrom(
+    maintainers: MaintainerInfo[],
+  ): Promise<string[]> {
     const ids = new Set<string>();
-    for (const m of this.config.maintainers) {
+    for (const m of maintainers) {
       if (m.chatId?.trim()) {
         ids.add(m.chatId.trim());
         continue;
@@ -149,6 +150,37 @@ export class EscalationService {
       }
     }
     return [...ids];
+  }
+
+  private async notifyNewMaintainers(
+    prevMaintainers: MaintainerInfo[],
+    nextMaintainers: MaintainerInfo[],
+  ): Promise<void> {
+    const prevIdentitySet = new Set(
+      prevMaintainers.map(
+        (m) => m.chatId.trim() || `name:${m.displayName.trim()}`,
+      ),
+    );
+    const added = nextMaintainers.filter((m) => {
+      const key = m.chatId.trim() || `name:${m.displayName.trim()}`;
+      return key && !prevIdentitySet.has(key);
+    });
+    if (added.length === 0) return;
+
+    const ids = await this.resolveMaintainerChatIdsFrom(added);
+    const menu = formatMaintainerMenu({ wikiEnabled: false });
+    await Promise.allSettled(
+      ids.map(async (id) => {
+        try {
+          await this.sendText(id, menu);
+        } catch (err) {
+          console.error(
+            `[pi-wechat] escalation: failed to send maintainer menu ${id}:`,
+            err,
+          );
+        }
+      }),
+    );
   }
 
   /** @deprecated 使用 resolveAllMaintainerChatIds；保留首 id 供过渡 */
@@ -472,152 +504,21 @@ export class EscalationService {
       actorChatId,
     );
 
-    const wikiReply = await tryMaintainerWikiOpsReply(
-      body,
-      ctx?.wikiClient,
-      ctx?.wikiEnabled === true,
+    const commandOutcome = await dispatchMaintainerCommand(
+      this.maintainerCommandHandlers,
+      {
+        actorChatId,
+        body,
+        operatorName,
+        client: this.client,
+        wikiEnabled: ctx?.wikiEnabled,
+        wikiClient: ctx?.wikiClient,
+        memoryClient: ctx?.memoryClient,
+        sendText: (chatId, reply) => this.sendText(chatId, reply),
+        notifyAllMaintainers: (reply) => this.notifyAllMaintainers(reply),
+      },
     );
-    if (wikiReply !== null) {
-      await this.sendText(actorChatId, wikiReply);
-      return "handled";
-    }
-
-    const pending = loadMaintainerPending();
-    if (pending?.action === "pick_memory") {
-      const picked = pickMaintainerCandidate(pending.candidates, body);
-      if (!picked) {
-        await this.sendText(
-          actorChatId,
-          "没对上号。请回复序号（如 1）、更完整备注名，或 chatId。",
-        );
-        return "handled";
-      }
-      if (!ctx?.memoryClient) {
-        await this.sendText(actorChatId, "Memory gateway 不可用。");
-        saveMaintainerPending(null);
-        return "handled";
-      }
-      saveMaintainerPending(null);
-      const snapshot = await formatMemorySnapshot(
-        picked,
-        ctx.memoryClient,
-      );
-      await this.sendText(actorChatId, snapshot);
-      return "handled";
-    }
-
-    if (pending?.action === "pick_unmute") {
-      const picked = pickMaintainerCandidate(pending.candidates, body);
-      if (!picked) {
-        await this.sendText(
-          actorChatId,
-          "没对上号。请回复序号（如 1）或客户备注名。",
-        );
-        return "handled";
-      }
-      unmuteChat(picked.chatId);
-      saveMaintainerPending(null);
-      await this.notifyAllMaintainers(
-        formatMaintainerActionBroadcast(
-          operatorName,
-          `已恢复对「${picked.chatName}」的自动回复。`,
-        ),
-      );
-      return "handled";
-    }
-
-    if (/^菜单$/u.test(body)) {
-      await this.sendText(
-        actorChatId,
-        formatMaintainerMenu({ wikiEnabled: ctx?.wikiEnabled === true }),
-      );
-      return "handled";
-    }
-
-    const memoryQuery = parseMaintainerMemoryCommand(body);
-    if (memoryQuery !== null) {
-      if (!ctx?.memoryClient) {
-        await this.sendText(actorChatId, "Memory gateway 不可用。");
-        return "handled";
-      }
-      const resolved = await resolveMemoryTarget(memoryQuery, this.client);
-      switch (resolved.kind) {
-        case "error":
-          await this.sendText(actorChatId, resolved.message);
-          return "handled";
-        case "single": {
-          const snapshot = await formatMemorySnapshot(
-            resolved.candidate,
-            ctx.memoryClient,
-          );
-          await this.sendText(actorChatId, snapshot);
-          return "handled";
-        }
-        case "too_many":
-          await this.sendText(
-            actorChatId,
-            `命中 ${resolved.count} 个，过多。请用 chatId 或更长备注名。`,
-          );
-          return "handled";
-        case "pick":
-          saveMaintainerPending({
-            action: "pick_memory",
-            query: resolved.query,
-            candidates: resolved.candidates,
-            expiresAt: Date.now() + maintainerMemoryPickTtlMs(),
-          });
-          await this.sendText(
-            actorChatId,
-            formatMemoryPickList(resolved.query, resolved.candidates),
-          );
-          return "handled";
-      }
-    }
-
-    if (/^列表$/u.test(body)) {
-      await this.sendText(actorChatId, formatMuteListMessage());
-      return "handled";
-    }
-
-    if (/^(已处理|解除)$/u.test(body)) {
-      const mutes = listActiveMutes();
-      if (mutes.length === 0) {
-        await this.sendText(actorChatId, formatNoMutesToClear());
-        return "handled";
-      }
-      if (mutes.length === 1) {
-        const only = mutes[0]!;
-        unmuteChat(only.chatId);
-        await this.notifyAllMaintainers(
-          formatMaintainerActionBroadcast(
-            operatorName,
-            `已恢复对「${only.chatName}」的自动回复。`,
-          ),
-        );
-        return "handled";
-      }
-      saveMaintainerPending({
-        action: "pick_unmute",
-        candidates: mutes.map((m) => ({
-          chatId: m.chatId,
-          chatName: m.chatName,
-        })),
-      });
-      await this.sendText(
-        actorChatId,
-        formatUnmutePickPrompt(mutes.length),
-      );
-      return "handled";
-    }
-
-    const activeMutes = listActiveMutes();
-    if (activeMutes.length > 0) {
-      await this.sendText(
-        actorChatId,
-        formatMaintainerBlockedChat(activeMutes.length),
-      );
-      return "blocked";
-    }
+    if (commandOutcome !== undefined) return commandOutcome;
 
     return "chat";
   }

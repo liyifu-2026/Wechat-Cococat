@@ -60,16 +60,22 @@ export function WechatShell({ children }: WechatShellProps) {
                     }
                     aria-hidden={activeWechatTab !== "chats"}
                   >
+                    <ErrorBoundary>
                     <InboxModule />
+                    </ErrorBoundary>
                   </div>
                   {activeWechatTab === "contacts" && (
                     <div className="h-full min-h-0">
+                      <ErrorBoundary>
                       <ContactsPanel />
+                      </ErrorBoundary>
                     </div>
                   )}
                   {activeWechatTab === "kb" && (
                     <div className="h-full min-h-0">
+                      <ErrorBoundary>
                       <WechatKnowledgePanel />
+                      </ErrorBoundary>
                     </div>
                   )}
                 </>

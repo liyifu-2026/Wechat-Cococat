@@ -1,6 +1,5 @@
 import { useEffect, useRef } from "react"
 import { listen } from "@tauri-apps/api/event"
-import { DRIVER_BASE_URL } from "@/lib/cococat-endpoints"
 import {
   DRIVER_NEW_MESSAGES_EVENT,
   parseDriverEvent,
@@ -29,68 +28,6 @@ function handleNewMessagesPayload(
   if (selectedChatId && ids.includes(selectedChatId)) {
     onSelectedChatActivity?.(selectedChatId)
   }
-}
-
-function useLegacyDriverWebSocket(
-  enabled: boolean,
-  selectedChatId: string | null,
-  onChatsChanged: (chatIds: string[]) => void,
-  onSelectedChatActivity?: (chatId: string) => void,
-) {
-  const onChatsRef = useRef(onChatsChanged)
-  const onSelectedRef = useRef(onSelectedChatActivity)
-  const selectedChatIdRef = useRef(selectedChatId)
-  onChatsRef.current = onChatsChanged
-  onSelectedRef.current = onSelectedChatActivity
-  selectedChatIdRef.current = selectedChatId
-
-  useEffect(() => {
-    if (!enabled) return
-
-    let ws: WebSocket | null = null
-    let cancelled = false
-    let retryMs = 1000
-
-    function connect() {
-      if (cancelled) return
-      const wsBase = DRIVER_BASE_URL.replace(/^http/, "ws")
-      ws = new WebSocket(`${wsBase}/api/ws/events`)
-
-      ws.onopen = () => {
-        retryMs = 1000
-      }
-
-      ws.onmessage = (ev) => {
-        try {
-          handleNewMessagesPayload(
-            JSON.parse(String(ev.data)) as unknown,
-            (ids) => onChatsRef.current(ids),
-            (chatId) => onSelectedRef.current?.(chatId),
-            selectedChatIdRef.current,
-          )
-        } catch {
-          // ignore malformed payloads
-        }
-      }
-
-      ws.onclose = () => {
-        if (cancelled) return
-        window.setTimeout(connect, retryMs)
-        retryMs = Math.min(retryMs * 1.5, 15_000)
-      }
-
-      ws.onerror = () => {
-        ws?.close()
-      }
-    }
-
-    connect()
-
-    return () => {
-      cancelled = true
-      ws?.close()
-    }
-  }, [enabled])
 }
 
 export function useDriverEvents({
@@ -134,10 +71,4 @@ export function useDriverEvents({
     }
   }, [enabled])
 
-  useLegacyDriverWebSocket(
-    enabled && !isTauri(),
-    selectedChatId,
-    onChatsChanged,
-    onSelectedChatActivity,
-  )
 }

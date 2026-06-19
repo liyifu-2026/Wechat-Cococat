@@ -1,6 +1,8 @@
-import { describe, it } from "node:test";
+import { afterEach, beforeEach, describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { writeFileSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { Message } from "@cococat/shared";
 import { ensureChatContext } from "./chat-store.js";
 import type { GroupConfig } from "./group-config.js";
@@ -14,11 +16,23 @@ const defaultGroup: GroupConfig = {
   groupHistoryLimit: 50,
 };
 
-describe("inbound-gate", () => {
+const prevData = process.env.COCOCAT_DATA_DIR;
+
+beforeEach(() => {
+  process.env.COCOCAT_DATA_DIR = mkdtempSync(join(tmpdir(), "cococat-gate-"));
+});
+
+afterEach(() => {
+  if (prevData === undefined) delete process.env.COCOCAT_DATA_DIR;
+  else process.env.COCOCAT_DATA_DIR = prevData;
+});
+
+describe("inbound-gate", { concurrency: false }, () => {
   it("fast mode discards on cooling down when not mentioned", async () => {
     const chatId = "gate-cool@test";
     recordAutoReply(chatId);
     const chatCtx = ensureChatContext(chatId);
+    chatCtx.style.replyCooldownMs = 30_000;
     const unseen = [{ localId: 10, isSelf: false, content: "hi" }] as Message[];
 
     const result = await evaluateInboundGate({

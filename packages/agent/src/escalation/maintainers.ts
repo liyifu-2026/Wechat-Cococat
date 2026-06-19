@@ -39,7 +39,7 @@ export function parseMaintainersFromRaw(
 
 export function maintainerIdentityFromList(maintainers: MaintainerInfo[]): string {
   const ids = maintainers
-    .map((m) => m.chatId.trim())
+    .map((m) => m.chatId.trim() || `name:${m.displayName.trim()}`)
     .filter(Boolean)
     .sort();
   return ids.join("|");

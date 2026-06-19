@@ -219,6 +219,31 @@ stop_pidfile() {
   rm -f "$pid_file"
 }
 
+_create_driver_container() {
+  local image="${AGENT_WECHAT_IMAGE:-agent-wechat:amd64}"
+  if ! docker image inspect "$image" >/dev/null 2>&1; then
+    echo "driver: image $image not found — run: pnpm build:image"
+    return 1
+  fi
+  _ensure_redis_running || {
+    echo "driver: starting redis..."
+    docker rm -f cococat-redis 2>/dev/null || true
+    docker run -d --name cococat-redis -p 6379:6379 --restart unless-stopped redis:7-alpine
+  }
+  echo "driver: creating container agent-wechat from $image"
+  docker rm -f agent-wechat 2>/dev/null || true
+  docker run -d --name agent-wechat \
+    --security-opt seccomp=unconfined \
+    --cap-add SYS_PTRACE --cap-add NET_ADMIN \
+    -p 6174:6174 \
+    -v "$COCOCAT_DATA/data:/data" \
+    -v "$COCOCAT_DATA/wechat-home:/home/wechat" \
+    -v "$COCOCAT_CONFIG/token:/data/auth-token:ro" \
+    -e TZ=Asia/Shanghai \
+    --restart unless-stopped \
+    "$image"
+}
+
 _run_driver_up() {
   setup_path
   export AGENT_WECHAT_DATA_ROOT="$COCOCAT_DATA"
@@ -227,18 +252,7 @@ _run_driver_up() {
   if _start_existing_driver_containers; then
     return 0
   fi
-  if command -v docker-compose >/dev/null 2>&1; then
-    docker-compose up -d
-  elif docker compose version >/dev/null 2>&1; then
-    docker compose up -d
-  elif [[ -f "$REPO_ROOT/packages/cli/dist/cli.js" ]]; then
-    local node_bin
-    node_bin="$(find_node)"
-    "$node_bin" "$REPO_ROOT/packages/cli/dist/cli.js" up
-  else
-    echo "driver: need docker compose or built CLI ($REPO_ROOT/packages/cli/dist/cli.js)"
-    return 1
-  fi
+  _create_driver_container
 }
 
 start_driver() {
@@ -288,16 +302,24 @@ start_driver() {
           echo 'driver: starting existing container agent-wechat'
           docker start agent-wechat
         fi
-      elif command -v docker-compose >/dev/null 2>&1; then
-        docker-compose up -d
-      elif docker compose version >/dev/null 2>&1; then
-        docker compose up -d
-      elif [[ -f '${REPO_ROOT}/packages/cli/dist/cli.js' ]]; then
-        node_bin=\$(command -v node || echo /usr/bin/node)
-        \"\$node_bin\" '${REPO_ROOT}/packages/cli/dist/cli.js' up
       else
-        echo 'driver: need docker compose or built CLI'
-        exit 1
+        local_image=\"\${AGENT_WECHAT_IMAGE:-agent-wechat:amd64}\"
+        if ! docker image inspect \"\$local_image\" >/dev/null 2>&1; then
+          echo \"driver: image \$local_image not found — run: pnpm build:image\"
+          exit 1
+        fi
+        echo \"driver: creating container agent-wechat from \$local_image\"
+        docker rm -f agent-wechat 2>/dev/null || true
+        docker run -d --name agent-wechat \
+          --security-opt seccomp=unconfined \
+          --cap-add SYS_PTRACE --cap-add NET_ADMIN \
+          -p 6174:6174 \
+          -v '${COCOCAT_DATA}/data:/data' \
+          -v '${COCOCAT_DATA}/wechat-home:/home/wechat' \
+          -v '${COCOCAT_CONFIG}/token:/data/auth-token:ro' \
+          -e TZ=Asia/Shanghai \
+          --restart unless-stopped \
+          \"\$local_image\"
       fi
     "
   fi

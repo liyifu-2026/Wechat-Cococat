@@ -14,6 +14,7 @@ export type ChatListContextMenuProps = {
   isPinned: boolean
   isTodo: boolean
   isMuted: boolean
+  hasUnread: boolean
   onClose: () => void
   onTogglePin: () => void
   onToggleMaintainer: () => void
@@ -21,6 +22,8 @@ export type ChatListContextMenuProps = {
   onMarkDone: () => void
   onMute: () => void
   onUnmute: () => void
+  onMarkRead: () => void
+  onMarkUnread: () => void
 }
 
 function MenuButton({
@@ -52,6 +55,7 @@ export function ChatListContextMenu({
   isPinned,
   isTodo,
   isMuted,
+  hasUnread,
   onClose,
   onTogglePin,
   onToggleMaintainer,
@@ -59,6 +63,8 @@ export function ChatListContextMenu({
   onMarkDone,
   onMute,
   onUnmute,
+  onMarkRead,
+  onMarkUnread,
 }: ChatListContextMenuProps) {
   const { t } = useTranslation()
   useContextMenuDismiss(true, onClose)
@@ -88,6 +94,16 @@ export function ChatListContextMenu({
           ? t("wechat.inbox.removeMaintainer")
           : t("wechat.inbox.setMaintainer")}
       </MenuButton>
+      <div className="my-1 border-t border-[var(--wx-border)]" />
+      {hasUnread ? (
+        <MenuButton onClick={closeAfter(onMarkRead)}>
+          {t("wechat.inbox.contextMarkRead")}
+        </MenuButton>
+      ) : (
+        <MenuButton onClick={closeAfter(onMarkUnread)}>
+          {t("wechat.inbox.contextMarkUnread")}
+        </MenuButton>
+      )}
       <div className="my-1 border-t border-[var(--wx-border)]" />
       {isTodo ? (
         <MenuButton onClick={closeAfter(onMarkDone)}>

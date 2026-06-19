@@ -24,8 +24,13 @@ async fn handle_events_ws(mut socket: WebSocket) {
                 match result {
                     Ok(text) => text,
                     Err(broadcast::error::RecvError::Lagged(skipped)) => {
-                        tracing::warn!("[ws/events] Client lagged, skipped {skipped} messages — closing to trigger reconnect + snapshot");
-                        break;
+                        tracing::warn!("[ws/events] Client lagged, skipped {skipped} messages");
+                        serde_json::json!({
+                            "type": "events_lagged",
+                            "skipped": skipped,
+                            "timestamp": chrono::Utc::now().to_rfc3339(),
+                        })
+                        .to_string()
                     }
                     Err(broadcast::error::RecvError::Closed) => break,
                 }
@@ -96,5 +101,8 @@ async fn send_current_snapshot(socket: &mut WebSocket) {
     });
 
     let _ = socket.send(Message::Text(payload.to_string().into())).await;
-    tracing::info!("[ws/events] Snapshoted {} chats to new client", snapshot.len());
+    tracing::info!(
+        "[ws/events] Snapshoted {} chats to new client",
+        snapshot.len()
+    );
 }

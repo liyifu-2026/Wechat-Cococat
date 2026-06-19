@@ -156,7 +156,11 @@ export class WikiClient {
       }
       await this.request("GET", "/projects");
       return true;
-    } catch {
+    } catch (err) {
+      console.warn(
+        "[pi-wechat] wiki health check failed:",
+        err instanceof Error ? err.message : err,
+      );
       return false;
     }
   }
@@ -305,7 +309,11 @@ export class WikiClient {
         indexHash: String(scope.indexHash ?? ""),
         updatedAt: String(scope.updatedAt ?? ""),
       };
-    } catch {
+    } catch (err) {
+      console.warn(
+        `[pi-wechat] failed to load wiki project meta for ${alias}:`,
+        err instanceof Error ? err.message : err,
+      );
       return null;
     }
   }

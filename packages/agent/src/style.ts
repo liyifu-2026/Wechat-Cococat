@@ -28,6 +28,7 @@ export type ChatStyle = {
 };
 
 const styleCache = new Map<string, { mtimeMs: number; style: ChatStyle }>();
+const MAX_STYLE_CACHE_ENTRIES = 1_000;
 
 const SERVICE_STYLE_DEFAULTS: Pick<
   ChatStyle,
@@ -107,8 +108,17 @@ export function loadChatStyleCached(stylePath: string): ChatStyle {
     }
     const style = loadChatStyle(stylePath);
     styleCache.set(stylePath, { mtimeMs, style });
+    while (styleCache.size > MAX_STYLE_CACHE_ENTRIES) {
+      const oldest = styleCache.keys().next().value as string | undefined;
+      if (!oldest) break;
+      styleCache.delete(oldest);
+    }
     return style;
-  } catch {
+  } catch (err) {
+    console.warn(
+      `[pi-wechat] stat style cache failed for ${stylePath}:`,
+      err instanceof Error ? err.message : err,
+    );
     return loadChatStyle(stylePath);
   }
 }
@@ -172,7 +182,11 @@ export function loadChatStyle(stylePath: string): ChatStyle {
             : undefined,
     };
     return resolveEffectiveStyle(loaded);
-  } catch {
+  } catch (err) {
+    console.warn(
+      `[pi-wechat] failed to load style ${stylePath}; using defaults:`,
+      err instanceof Error ? err.message : err,
+    );
     return resolveEffectiveStyle({
       personaMode: "service",
       ...LEGACY_STYLE_DEFAULTS,

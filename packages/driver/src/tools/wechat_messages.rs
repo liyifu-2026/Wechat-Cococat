@@ -1,5 +1,5 @@
-use super::wechat_db::{get_db_path, query_wechat_db};
 use super::wechat_artifacts::{existing_artifact_ref, media_kind_for_msg_type};
+use super::wechat_db::{get_db_path, query_wechat_db};
 use crate::ia::types::{Message, ReplyInfo};
 use md5::{Digest, Md5};
 use serde_json::Value;
@@ -93,11 +93,9 @@ fn clean_content(content: &str, msg_type: i32) -> String {
         // Video (type 43): strip XML payload
         43 if content.contains("<videomsg") || content.contains("<msg>") => String::new(),
         // Emoji (type 47): show cdnurl or [emoji]
-        47 if content.contains("<emoji") => {
-            extract_xml_attr(content, "cdnurl")
-                .filter(|u| u.starts_with("http"))
-                .unwrap_or_else(|| "[emoji]".to_string())
-        }
+        47 if content.contains("<emoji") => extract_xml_attr(content, "cdnurl")
+            .filter(|u| u.starts_with("http"))
+            .unwrap_or_else(|| "[emoji]".to_string()),
         // Appmsg (type 49): handle subtypes
         49 if content.contains("<msg>") => {
             let title = extract_xml_tag(content, "title").unwrap_or_default();
@@ -170,7 +168,11 @@ fn extract_xml_attr(xml: &str, attr: &str) -> Option<String> {
     let start = xml.find(&pattern)? + pattern.len();
     let end = xml[start..].find('"')? + start;
     let val = xml[start..end].trim().to_string();
-    if val.is_empty() { None } else { Some(val) }
+    if val.is_empty() {
+        None
+    } else {
+        Some(val)
+    }
 }
 
 /// Extract text between XML tags: <tag>text</tag>
@@ -185,7 +187,11 @@ pub(crate) fn extract_xml_tag(xml: &str, tag: &str) -> Option<String> {
     if val.starts_with("<![CDATA[") && val.ends_with("]]>") {
         val = val[9..val.len() - 3].to_string();
     }
-    if val.is_empty() { None } else { Some(val) }
+    if val.is_empty() {
+        None
+    } else {
+        Some(val)
+    }
 }
 
 /// Check if the source XML indicates the current user is @-mentioned.
@@ -246,9 +252,7 @@ pub fn find_message_db<'a>(
         let check = query_wechat_db(
             &db_path,
             key,
-            &format!(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name='{table_name}';"
-            ),
+            &format!("SELECT name FROM sqlite_master WHERE type='table' AND name='{table_name}';"),
         );
         if !check.is_empty() {
             return Some((db_name.to_string(), key));
@@ -336,14 +340,8 @@ fn rows_into_messages(
     rows.iter()
         .filter_map(|row| {
             let local_id = row.get("local_id")?.as_i64()?;
-            let server_id = row
-                .get("server_id")
-                .and_then(|v| v.as_i64())
-                .unwrap_or(0);
-            let msg_type = row
-                .get("local_type")
-                .and_then(|v| v.as_i64())
-                .unwrap_or(0) as i32;
+            let server_id = row.get("server_id").and_then(|v| v.as_i64()).unwrap_or(0);
+            let msg_type = row.get("local_type").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
 
             let hex_content = row
                 .get("hex_content")
@@ -383,10 +381,7 @@ fn rows_into_messages(
                 .unwrap_or_default();
 
             let is_mentioned = if is_group {
-                let hex_source = row
-                    .get("hex_source")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("");
+                let hex_source = row.get("hex_source").and_then(|v| v.as_str()).unwrap_or("");
                 let source_compressed = row
                     .get("source_compressed")
                     .and_then(|v| v.as_i64())
@@ -482,9 +477,7 @@ fn message_create_time(
     let rows = query_wechat_db(
         &db_path,
         key,
-        &format!(
-            "SELECT create_time FROM \"{table_name}\" WHERE local_id = {local_id} LIMIT 1;"
-        ),
+        &format!("SELECT create_time FROM \"{table_name}\" WHERE local_id = {local_id} LIMIT 1;"),
     );
     rows.first()?.get("create_time")?.as_i64()
 }

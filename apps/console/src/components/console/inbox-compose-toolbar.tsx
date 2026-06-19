@@ -7,21 +7,22 @@ type InboxComposeToolbarProps = {
   emojiActive?: boolean
   emojiButtonRef?: React.RefObject<HTMLButtonElement | null>
   onToggleEmoji?: () => void
+  onSelectImage?: () => void
+  imageSending?: boolean
   onUnavailable?: () => void
   onOpenHistory?: () => void
   historyDisabled?: boolean
 }
 
-const TOOLBAR_ITEMS = [
-  { id: "image", icon: Image },
-  { id: "file", icon: FolderOpen },
-] as const
+const FILE_TOOLBAR_ITEM = { id: "file", icon: FolderOpen } as const
 
 export function InboxComposeToolbar({
   disabled = false,
   emojiActive = false,
   emojiButtonRef,
   onToggleEmoji,
+  onSelectImage,
+  imageSending = false,
   onUnavailable,
   onOpenHistory,
   historyDisabled = false,
@@ -48,22 +49,36 @@ export function InboxComposeToolbar({
       >
         <Smile className="h-4 w-4" />
       </button>
-      {TOOLBAR_ITEMS.map(({ id, icon: Icon }) => (
-        <button
-          key={id}
-          type="button"
-          disabled={disabled}
-          title={t("wechat.inbox.composeToolbarSoon")}
-          aria-label={t("wechat.inbox.composeToolbarSoon")}
-          className="flex h-8 w-8 items-center justify-center rounded text-[var(--wx-muted)] transition-colors hover:bg-[var(--wx-list-hover)] hover:text-[var(--wx-text)] disabled:cursor-not-allowed disabled:opacity-40"
-          onClick={() => {
-            if (disabled) return
-            onUnavailable?.()
-          }}
-        >
-          <Icon className="h-4 w-4" />
-        </button>
-      ))}
+      <button
+        type="button"
+        disabled={disabled || imageSending}
+        title={t("wechat.inbox.composeImage")}
+        aria-label={t("wechat.inbox.composeImage")}
+        className={cn(
+          "flex h-8 w-8 items-center justify-center rounded text-[var(--wx-muted)] transition-colors hover:bg-[var(--wx-list-hover)] hover:text-[var(--wx-text)] disabled:cursor-not-allowed disabled:opacity-40",
+          imageSending && "text-[var(--wx-accent)]",
+        )}
+        onClick={() => {
+          if (disabled || imageSending) return
+          onSelectImage?.()
+        }}
+      >
+        <Image className="h-4 w-4" />
+      </button>
+      <button
+        key={FILE_TOOLBAR_ITEM.id}
+        type="button"
+        disabled={disabled}
+        title={t("wechat.inbox.composeToolbarSoon")}
+        aria-label={t("wechat.inbox.composeToolbarSoon")}
+        className="flex h-8 w-8 items-center justify-center rounded text-[var(--wx-muted)] transition-colors hover:bg-[var(--wx-list-hover)] hover:text-[var(--wx-text)] disabled:cursor-not-allowed disabled:opacity-40"
+        onClick={() => {
+          if (disabled) return
+          onUnavailable?.()
+        }}
+      >
+        <FolderOpen className="h-4 w-4" />
+      </button>
       {onOpenHistory && (
         <button
           type="button"

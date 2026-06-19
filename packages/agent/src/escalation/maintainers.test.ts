@@ -46,4 +46,14 @@ describe("maintainerIdentityFromList", () => {
       "wxid_a|wxid_b",
     );
   });
+
+  test("tracks display-name-only maintainers", () => {
+    assert.equal(
+      maintainerIdentityFromList([
+        { chatId: "", displayName: "Alice" },
+        { chatId: "wxid_b", displayName: "B" },
+      ]),
+      "name:Alice|wxid_b",
+    );
+  });
 });

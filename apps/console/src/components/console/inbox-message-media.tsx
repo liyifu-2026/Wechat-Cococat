@@ -1,8 +1,5 @@
-import { memo, useCallback, useEffect, useRef, useState } from "react"
-import { useTranslation } from "react-i18next"
+import { memo, useEffect, useRef, useState } from "react"
 import type { DriverMessage } from "@/lib/driver-types"
-import type { DriverMediaResult } from "@/lib/driver-client"
-import { useVoiceTranscript } from "@/hooks/use-voice-transcript"
 import {
   getCachedMedia,
   mediaDataUrl,
@@ -12,11 +9,13 @@ import {
   isPlayableVoiceMedia,
   isPlayableVisualMedia,
 } from "@/lib/inbox-media-playable"
+import { VoiceMessageBubble } from "@/components/console/voice-message-bubble"
 
 type InboxMessageMediaProps = {
   chatId: string
   message: DriverMessage
   fallbackLabel: string
+  isSelf?: boolean
   onImageClick?: (localId: number) => void
 }
 
@@ -44,91 +43,6 @@ function VoiceLoadingPlaceholder() {
     >
       <div className="h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-[var(--wx-muted)] border-t-transparent" />
       <div className="h-2 max-w-[8rem] flex-1 animate-pulse rounded bg-[var(--wx-media-placeholder)]" />
-    </div>
-  )
-}
-
-function voiceNotReady(media: DriverMediaResult): boolean {
-  return (
-    media.format === "silk" ||
-    media.type === "pending" ||
-    media.type === "unsupported"
-  )
-}
-
-function voiceTranscriptErrorLabel(
-  message: string,
-  t: (key: string) => string,
-): string {
-  if (message === "CAPTION_NOT_CONFIGURED") {
-    return t("wechat.inbox.voiceTranscribeNoConfig")
-  }
-  if (message === "CAPTION_EMPTY") {
-    return t("wechat.inbox.voiceTranscribeEmpty")
-  }
-  if (message.startsWith("caption LLM HTTP 401") || message.includes("401")) {
-    return t("wechat.inbox.voiceTranscribeNoConfig")
-  }
-  if (message.startsWith("caption LLM HTTP")) {
-    return t("wechat.inbox.voiceTranscribeFailed")
-  }
-  if (message.length > 0 && message.length <= 160) return message
-  return t("wechat.inbox.voiceTranscribeFailed")
-}
-
-function VoiceBubble({
-  chatId,
-  localId,
-  media,
-  fallbackLabel,
-}: {
-  chatId: string
-  localId: number
-  media: DriverMediaResult
-  fallbackLabel: string
-}) {
-  const { t } = useTranslation()
-  const src = mediaDataUrl(media)
-  const { state, transcribe } = useVoiceTranscript(chatId, localId)
-
-  const handleTranscribe = useCallback(() => {
-    if (!src) return
-    if (voiceNotReady(media)) return
-    void transcribe(src)
-  }, [media, src, transcribe])
-
-  if (!src) return <span>{fallbackLabel}</span>
-
-  const showTranscript =
-    state.status === "done" ||
-    state.status === "loading" ||
-    state.status === "error"
-
-  return (
-    <div className="flex min-w-[12rem] max-w-full flex-col gap-1">
-      <audio controls preload="metadata" className="max-w-full" src={src}>
-        {t("wechat.inbox.mediaVoice")}
-      </audio>
-      <div className="flex items-center gap-2">
-        <button
-          type="button"
-          className="text-xs text-[var(--wx-accent)] hover:underline disabled:cursor-not-allowed disabled:opacity-50"
-          disabled={state.status === "loading" || voiceNotReady(media)}
-          onClick={handleTranscribe}
-        >
-          {state.status === "loading"
-            ? t("wechat.inbox.voiceTranscribing")
-            : t("wechat.inbox.voiceTranscribe")}
-        </button>
-      </div>
-      {showTranscript && (
-        <p className="whitespace-pre-wrap break-words text-xs leading-relaxed text-[var(--wx-text)]">
-          {state.status === "loading" && t("wechat.inbox.voiceTranscribing")}
-          {state.status === "done" && state.text}
-          {state.status === "error" &&
-            voiceTranscriptErrorLabel(state.message, t)}
-        </p>
-      )}
     </div>
   )
 }
@@ -198,6 +112,7 @@ function InboxMessageMediaInner({
   chatId,
   message,
   fallbackLabel,
+  isSelf = false,
   onImageClick,
 }: InboxMessageMediaProps) {
   const kind = message.mediaKind ?? ""
@@ -238,11 +153,12 @@ function InboxMessageMediaInner({
 
   if (resolved.type === "voice") {
     return (
-      <VoiceBubble
+      <VoiceMessageBubble
         chatId={chatId}
         localId={message.localId}
         media={resolved}
         fallbackLabel={fallbackLabel}
+        isSelf={isSelf}
       />
     )
   }

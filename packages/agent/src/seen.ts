@@ -59,8 +59,11 @@ export class SeenStore {
       console.log(
         `[pi-wechat] migrated ${migrated.length} seen entries for ${this.chatId}`,
       );
-    } catch {
-      // ignore
+    } catch (err) {
+      console.warn(
+        `[pi-wechat] failed to migrate legacy seen store for ${this.chatId}:`,
+        err instanceof Error ? err.message : err,
+      );
     }
   }
 
@@ -74,8 +77,11 @@ export class SeenStore {
           if (typeof item === "string") this.seen.add(item);
         }
       }
-    } catch {
-      // ignore corrupt file
+    } catch (err) {
+      console.warn(
+        `[pi-wechat] failed to load seen store ${this.path}; duplicate processing may occur:`,
+        err instanceof Error ? err.message : err,
+      );
     }
   }
 }

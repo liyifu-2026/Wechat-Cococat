@@ -55,21 +55,18 @@ import {
 } from "./agent-trace.js";
 import { ensureChatWikiAutoBound } from "./wiki-auto-bind.js";
 import { createWikiTools } from "./wiki-tools.js";
-import {
-  createAgentHandoffTools,
-  type AgentHandoffTurnRef,
-} from "./escalation/agent-handoff.js";
+import { createAgentHandoffTools } from "./escalation/agent-handoff.js";
 import { isQueueEnabled } from "./queue/redis.js";
 import { cancelPendingOutboundForChat } from "./queue/cancel-pending-outbound.js";
 import { createScheduleTools } from "./schedule-tools.js";
 import { createContactProfileTools } from "./contact-profile-tools.js";
 import { resolveCustomerContextPrompt } from "./customer-context-prompt.js";
-import type { MimoAudioInput } from "./mimo-audio.js";
 import { applyPayloadHooks } from "./payload-hooks.js";
 import {
   runThoughtfulTurn,
   shouldUseThoughtful,
 } from "./thoughtful.js";
+import { TurnRuntime } from "./turn-runtime.js";
 import type { ImageContent } from "@earendil-works/pi-ai";
 
 function messageKey(localId: number): string {
@@ -92,28 +89,13 @@ function resolveModel(provider: string, modelId: string) {
 
 export class ChatSession {
   private agent: Agent;
-  private sendCountRef = { current: 0 };
-  private sentTextsRef: { current: string[] } = { current: [] };
+  private readonly turn = new TurnRuntime();
   private busy = false;
+  private workQueue: Promise<void> = Promise.resolve();
   private transcriptLoaded = false;
   private transcriptEntries: TranscriptEntry[] = [];
-  private replyMentionsRef: { current: string[] | undefined } = {
-    current: undefined,
-  };
-  private pendingAudiosRef: { current: MimoAudioInput[] } = { current: [] };
-  private pendingVoiceCaptionRef: { current: boolean } = { current: false };
-  private pendingSystemRef: { current: string } = { current: "" };
   private seenStore: SeenStore;
-  private lastTriageConfidence?: number;
   private maxSendsPerTurn: number;
-  private gatherBlockSendRef = { current: false };
-  private stealthRetriedRef = { current: false };
-  private currentTurnId?: string;
-  private handoffTurnRef: AgentHandoffTurnRef = {
-    chatName: "",
-    userLines: [],
-    done: false,
-  };
 
   constructor(
     private client: WeChatClient,
@@ -131,12 +113,12 @@ export class ChatSession {
       client,
       chatId: chatCtx.chatId,
       isGroup: chatCtx.chatId.includes("@chatroom"),
-      sendCountRef: this.sendCountRef,
-      sentTextsRef: this.sentTextsRef,
+      sendCountRef: this.turn.sendCountRef,
+      sentTextsRef: this.turn.sentTextsRef,
       burstDelayMs: chatCtx.style.burstDelayMs,
-      replyMentionsRef: this.replyMentionsRef,
+      replyMentionsRef: this.turn.replyMentionsRef,
       maxSendsPerTurn: this.maxSendsPerTurn,
-      stealthRetriedRef: this.stealthRetriedRef,
+      stealthRetriedRef: this.turn.stealthRetriedRef,
       serviceStealthEnabled: isServicePersona(chatCtx.style),
     });
 
@@ -159,7 +141,7 @@ export class ChatSession {
         ...createAgentHandoffTools(
           escalation,
           chatCtx.chatId,
-          this.handoffTurnRef,
+          this.turn.handoffTurnRef,
         ),
       );
     }
@@ -176,7 +158,7 @@ export class ChatSession {
 
     const tools = wrapToolsWithTrace([...baseTools, ...extraTools], {
       chatId: chatCtx.chatId,
-      getTurnId: () => this.currentTurnId,
+      getTurnId: () => this.turn.currentTurnId,
     });
 
     this.agent = new Agent({
@@ -202,25 +184,25 @@ export class ChatSession {
         if (!WECHAT_OUTBOUND_TOOL_NAMES.has(ctx.toolCall.name)) {
           return undefined;
         }
-        if (this.gatherBlockSendRef.current) {
+        if (this.turn.gatherBlockSendRef.current) {
           return {
             block: true,
             reason: "调研阶段不可发微信，请先整理要点。",
           };
         }
-        if (this.handoffTurnRef.done) {
+        if (this.turn.handoffTurnRef.done) {
           return {
             block: true,
             reason: "本会话已转同事跟进，勿再发微信。",
           };
         }
-        if (this.sendCountRef.current >= this.maxSendsPerTurn) {
+        if (this.turn.sendCountRef.current >= this.maxSendsPerTurn) {
           return {
             block: true,
             reason: `每轮最多 ${this.maxSendsPerTurn} 条微信。`,
           };
         }
-        if (this.sendCountRef.current === 0) {
+        if (this.turn.sendCountRef.current === 0) {
           await applyDelay(this.chatCtx.style.replyDelayMs);
         }
         if (
@@ -230,7 +212,7 @@ export class ChatSession {
           const raw = (ctx.toolCall.arguments as { text?: string })?.text ?? "";
           const prepared = prepareServiceOutboundText(
             raw,
-            this.stealthRetriedRef,
+            this.turn.stealthRetriedRef,
           );
           if (!prepared.ok && prepared.retry) {
             return {
@@ -244,17 +226,26 @@ export class ChatSession {
       onPayload: (payload) => {
         let next = applyPayloadHooks(
           payload,
-          this.pendingSystemRef.current,
-          this.pendingAudiosRef.current,
-          this.pendingVoiceCaptionRef.current,
+          this.turn.pendingSystemRef.current,
+          this.turn.pendingAudiosRef.current,
+          this.turn.pendingVoiceCaptionRef.current,
         );
-        this.pendingAudiosRef.current = [];
+        this.turn.pendingAudiosRef.current = [];
         return next;
       },
       onResponse: async () => {
         stripReasoningFromAgent(this.agent);
       },
     });
+  }
+
+  private runExclusive<T>(fn: () => Promise<T>): Promise<T> {
+    const run = this.workQueue.then(fn, fn);
+    this.workQueue = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
   }
 
   private async hydrateTranscript(isGroup: boolean): Promise<void> {
@@ -340,14 +331,15 @@ export class ChatSession {
   }
 
   async process(chatName: string, isGroup: boolean): Promise<void> {
-    if (this.busy) return;
-    this.seenStore.reload();
-    const messages = await this.client.listMessages(this.chatCtx.chatId, 40);
-    const unseen = messages.filter(
-      (m) => !m.isSelf && !this.seenStore.has(messageKey(m.localId)),
-    );
-    if (unseen.length === 0) return;
-    await this.processUnseen(chatName, isGroup, unseen);
+    await this.runExclusive(async () => {
+      this.seenStore.reload();
+      const messages = await this.client.listMessages(this.chatCtx.chatId, 40);
+      const unseen = messages.filter(
+        (m) => !m.isSelf && !this.seenStore.has(messageKey(m.localId)),
+      );
+      if (unseen.length === 0) return;
+      await this.processUnseen(chatName, isGroup, unseen);
+    });
   }
 
   async processSnapshot(
@@ -356,25 +348,26 @@ export class ChatSession {
     snapshotLocalIds: number[],
     opts?: { replyGuardChecked?: boolean },
   ): Promise<void> {
-    if (this.busy) return;
-    this.seenStore.reload();
-    const idSet = new Set(snapshotLocalIds);
-    const messages = await this.client.listMessages(this.chatCtx.chatId, 40);
-    const snapshotMsgs = messages.filter(
-      (m) => !m.isSelf && idSet.has(m.localId),
-    );
-    let unseen = snapshotMsgs.filter(
-      (m) => !this.seenStore.has(messageKey(m.localId)),
-    );
-    // snapshot localId 在窗口里找不到时，才回退到「任意未 seen」
-    if (unseen.length === 0 && snapshotMsgs.length === 0) {
-      unseen = messages.filter(
-        (m) =>
-          !m.isSelf && !this.seenStore.has(messageKey(m.localId)),
+    await this.runExclusive(async () => {
+      this.seenStore.reload();
+      const idSet = new Set(snapshotLocalIds);
+      const messages = await this.client.listMessages(this.chatCtx.chatId, 40);
+      const snapshotMsgs = messages.filter(
+        (m) => !m.isSelf && idSet.has(m.localId),
       );
-    }
-    if (unseen.length === 0) return;
-    await this.processUnseen(chatName, isGroup, unseen, opts);
+      let unseen = snapshotMsgs.filter(
+        (m) => !this.seenStore.has(messageKey(m.localId)),
+      );
+      // snapshot localId 在窗口里找不到时，才回退到「任意未 seen」
+      if (unseen.length === 0 && snapshotMsgs.length === 0) {
+        unseen = messages.filter(
+          (m) =>
+            !m.isSelf && !this.seenStore.has(messageKey(m.localId)),
+        );
+      }
+      if (unseen.length === 0) return;
+      await this.processUnseen(chatName, isGroup, unseen, opts);
+    });
   }
 
   async runProactiveTurn(params: {
@@ -383,9 +376,9 @@ export class ChatSession {
     systemPrompt?: string;
     thoughtful?: boolean;
   }): Promise<void> {
-    if (this.busy) return;
-    this.busy = true;
-    try {
+    await this.runExclusive(async () => {
+      this.busy = true;
+      try {
       await this.prepareWikiBinding();
       const isGroupChat =
         params.isGroup || this.chatCtx.chatId.includes("@chatroom");
@@ -397,7 +390,7 @@ export class ChatSession {
         taskLine.slice(0, 500),
       );
 
-      this.pendingSystemRef.current = buildSystemPrompt({
+      this.turn.pendingSystemRef.current = buildSystemPrompt({
         chatName: params.chatName,
         isGroup: isGroupChat,
         personaPath: this.chatCtx.personaPath,
@@ -419,9 +412,7 @@ export class ChatSession {
           : resolveCustomerContextPrompt(this.chatCtx.chatId),
       });
 
-      this.sendCountRef.current = 0;
-      this.sentTextsRef.current = [];
-      this.stealthRetriedRef.current = false;
+      this.turn.resetOutbound();
 
       await this.runPromptTurn(taskLine, [], {
         forceThoughtful: params.thoughtful === true,
@@ -435,26 +426,27 @@ export class ChatSession {
         this.agent,
         this.client,
         this.chatCtx.chatId,
-        this.sendCountRef.current,
+        this.turn.sendCountRef.current,
         undefined,
         this.chatCtx.style.burstDelayMs,
         this.maxSendsPerTurn,
         {
           serviceStealthEnabled: isServicePersona(this.chatCtx.style),
-          stealthRetriedRef: this.stealthRetriedRef,
+          stealthRetriedRef: this.turn.stealthRetriedRef,
         },
       );
-      this.sentTextsRef.current.push(...fallbackSent);
+      this.turn.sentTextsRef.current.push(...fallbackSent);
       this.traceReplySummary(params.chatName);
 
       finalizeProactiveTurn({
         chatCtx: this.chatCtx,
-        sentTexts: this.sentTextsRef.current,
+        sentTexts: this.turn.sentTextsRef.current,
       });
-    } finally {
-      this.busy = false;
-      this.agent.state.messages = [];
-    }
+      } finally {
+        this.busy = false;
+        this.agent.state.messages = [];
+      }
+    });
   }
 
   /** outbound 队列：入站 thoughtful 两阶段回复（Gather→Compose→发送）。 */
@@ -464,12 +456,9 @@ export class ChatSession {
     userLocalIds: number[];
     replyMentions?: string[];
   }): Promise<void> {
-    if (this.busy) {
-      throw new Error(`session busy: ${this.chatCtx.chatId}`);
-    }
-
-    this.busy = true;
-    try {
+    await this.runExclusive(async () => {
+      this.busy = true;
+      try {
       const isGroupChat =
         params.isGroup || this.chatCtx.chatId.includes("@chatroom");
       await this.hydrateTranscript(isGroupChat);
@@ -486,14 +475,11 @@ export class ChatSession {
         return;
       }
 
-      this.currentTurnId = createTurnId(
-        this.chatCtx.chatId,
-        params.userLocalIds,
-      );
-      this.handoffTurnRef.chatName = params.chatName;
-      this.handoffTurnRef.userLines = [];
-      this.handoffTurnRef.turnId = this.currentTurnId;
-      this.handoffTurnRef.done = false;
+      const turnId = createTurnId(this.chatCtx.chatId, params.userLocalIds);
+      this.turn.startTurn({
+        chatName: params.chatName,
+        turnId,
+      });
 
       const agentHandoffEnabled =
         !isGroupChat &&
@@ -508,34 +494,34 @@ export class ChatSession {
         chatName: params.chatName,
         isGroupChat,
         unseen,
-        turnId: this.currentTurnId,
+        turnId,
         replyMentions: params.replyMentions,
-        sendCountRef: this.sendCountRef,
-        sentTextsRef: this.sentTextsRef,
-        replyMentionsRef: this.replyMentionsRef,
-        pendingSystemRef: this.pendingSystemRef,
-        pendingAudiosRef: this.pendingAudiosRef,
-        pendingVoiceCaptionRef: this.pendingVoiceCaptionRef,
+        sendCountRef: this.turn.sendCountRef,
+        sentTextsRef: this.turn.sentTextsRef,
+        replyMentionsRef: this.turn.replyMentionsRef,
+        pendingSystemRef: this.turn.pendingSystemRef,
+        pendingAudiosRef: this.turn.pendingAudiosRef,
+        pendingVoiceCaptionRef: this.turn.pendingVoiceCaptionRef,
         maxSendsPerTurn: this.maxSendsPerTurn,
-        stealthRetriedRef: this.stealthRetriedRef,
+        stealthRetriedRef: this.turn.stealthRetriedRef,
         agentHandoffEnabled,
-        handoffTurnRef: this.handoffTurnRef,
+        handoffTurnRef: this.turn.handoffTurnRef,
         runThoughtfulTurn: async (prompt, images) => {
           const thoughtful = await runThoughtfulTurn({
             agent: this.agent,
             client: this.client,
             chatId: this.chatCtx.chatId,
             chatName: params.chatName,
-            turnId: this.currentTurnId,
+            turnId,
             style: this.chatCtx.style,
             userPrompt: prompt,
             images,
-            gatherBlockSendRef: this.gatherBlockSendRef,
-            sendCountRef: this.sendCountRef,
+            gatherBlockSendRef: this.turn.gatherBlockSendRef,
+            sendCountRef: this.turn.sendCountRef,
           });
           this.traceModelOutput(params.chatName);
           if (thoughtful.ackLine) {
-            this.sentTextsRef.current.push(thoughtful.ackLine);
+            this.turn.sentTextsRef.current.push(thoughtful.ackLine);
           }
         },
         traceReplySummary: (name) => this.traceReplySummary(name),
@@ -557,21 +543,20 @@ export class ChatSession {
         groupPolicy,
         groupBuffers: this.groupBuffers,
         escalation: this.escalation,
-        lastTriageConfidence: this.lastTriageConfidence,
+        lastTriageConfidence: this.turn.lastTriageConfidence,
         assistantOnlyTranscript: true,
       });
       this.transcriptEntries = loadTranscript(this.chatCtx.transcriptPath);
       this.agent.state.messages = [];
 
       console.log(
-        `[pi-wechat] ${params.chatName}: outbound thoughtful complete (${this.sentTextsRef.current.length} send(s))`,
+        `[pi-wechat] ${params.chatName}: outbound thoughtful complete (${this.turn.sentTextsRef.current.length} send(s))`,
       );
-    } finally {
-      this.busy = false;
-      this.replyMentionsRef.current = undefined;
-      this.pendingAudiosRef.current = [];
-      this.pendingVoiceCaptionRef.current = false;
-    }
+      } finally {
+        this.busy = false;
+        this.turn.clearOutboundScratch();
+      }
+    });
   }
 
   private traceModelOutput(chatName?: string): void {
@@ -580,7 +565,7 @@ export class ChatSession {
       appendAgentTrace({
         chatId: this.chatCtx.chatId,
         chatName,
-        turnId: this.currentTurnId,
+        turnId: this.turn.currentTurnId,
         phase: "thinking",
         detail: thinking,
       });
@@ -590,7 +575,7 @@ export class ChatSession {
       appendAgentTrace({
         chatId: this.chatCtx.chatId,
         chatName,
-        turnId: this.currentTurnId,
+        turnId: this.turn.currentTurnId,
         phase: "compose",
         detail: draft,
       });
@@ -598,14 +583,14 @@ export class ChatSession {
   }
 
   private traceReplySummary(chatName?: string): void {
-    if (this.sentTextsRef.current.length === 0) return;
+    if (this.turn.sentTextsRef.current.length === 0) return;
     appendAgentTrace({
       chatId: this.chatCtx.chatId,
       chatName,
-      turnId: this.currentTurnId,
+      turnId: this.turn.currentTurnId,
       phase: "reply",
-      query: `${this.sentTextsRef.current.length} 条`,
-      detail: this.sentTextsRef.current.join("\n---\n"),
+      query: `${this.turn.sentTextsRef.current.length} 条`,
+      detail: this.turn.sentTextsRef.current.join("\n---\n"),
     });
   }
 
@@ -636,17 +621,17 @@ export class ChatSession {
         client: this.client,
         chatId: this.chatCtx.chatId,
         chatName: opts.chatName,
-        turnId: this.currentTurnId,
+        turnId: this.turn.currentTurnId,
         style: this.chatCtx.style,
         userPrompt: prompt,
         images,
-        gatherBlockSendRef: this.gatherBlockSendRef,
-        sendCountRef: this.sendCountRef,
+        gatherBlockSendRef: this.turn.gatherBlockSendRef,
+        sendCountRef: this.turn.sendCountRef,
       });
       this.traceModelOutput(opts.chatName);
       stripReasoningFromAgent(this.agent);
       if (thoughtful.ackLine) {
-        this.sentTextsRef.current.push(thoughtful.ackLine);
+        this.turn.sentTextsRef.current.push(thoughtful.ackLine);
       }
       return;
     }
@@ -775,7 +760,7 @@ export class ChatSession {
 
       unseen = earlyGate.unseen;
       const { wasMentioned, groupPolicy, injectedBufferCount } = earlyGate;
-      this.lastTriageConfidence = earlyGate.lastTriageConfidence;
+      this.turn.lastTriageConfidence = earlyGate.lastTriageConfidence;
 
       if (injectedBufferCount > 0) {
         console.log(
@@ -829,15 +814,14 @@ export class ChatSession {
         }
       }
 
-      this.currentTurnId = createTurnId(
+      const turnId = createTurnId(
         this.chatCtx.chatId,
         unseen.map((m) => m.localId),
       );
-      this.stealthRetriedRef.current = false;
-      this.handoffTurnRef.chatName = chatName;
-      this.handoffTurnRef.userLines = [];
-      this.handoffTurnRef.turnId = this.currentTurnId;
-      this.handoffTurnRef.done = false;
+      this.turn.startTurn({
+        chatName,
+        turnId,
+      });
 
       const agentHandoffEnabled =
         !isGroupChat &&
@@ -855,18 +839,18 @@ export class ChatSession {
         wasMentioned,
         groupPolicy,
         injectedBufferCount,
-        turnId: this.currentTurnId,
+        turnId,
         groupBuffers: this.groupBuffers,
-        sendCountRef: this.sendCountRef,
-        sentTextsRef: this.sentTextsRef,
-        replyMentionsRef: this.replyMentionsRef,
-        pendingSystemRef: this.pendingSystemRef,
-        pendingAudiosRef: this.pendingAudiosRef,
-        pendingVoiceCaptionRef: this.pendingVoiceCaptionRef,
+        sendCountRef: this.turn.sendCountRef,
+        sentTextsRef: this.turn.sentTextsRef,
+        replyMentionsRef: this.turn.replyMentionsRef,
+        pendingSystemRef: this.turn.pendingSystemRef,
+        pendingAudiosRef: this.turn.pendingAudiosRef,
+        pendingVoiceCaptionRef: this.turn.pendingVoiceCaptionRef,
         maxSendsPerTurn: this.maxSendsPerTurn,
-        stealthRetriedRef: this.stealthRetriedRef,
+        stealthRetriedRef: this.turn.stealthRetriedRef,
         agentHandoffEnabled,
-        handoffTurnRef: this.handoffTurnRef,
+        handoffTurnRef: this.turn.handoffTurnRef,
         runPromptTurn: (prompt, images, opts) =>
           this.runPromptTurn(prompt, images, opts),
         traceReplySummary: (name) => this.traceReplySummary(name),
@@ -889,18 +873,15 @@ export class ChatSession {
         groupPolicy,
         groupBuffers: this.groupBuffers,
         escalation: this.escalation,
-        lastTriageConfidence: this.lastTriageConfidence,
+        lastTriageConfidence: this.turn.lastTriageConfidence,
       });
       this.transcriptEntries = loadTranscript(this.chatCtx.transcriptPath);
       this.agent.state.messages = [];
 
       this.markSeen(unseen);
     } finally {
-      this.lastTriageConfidence = undefined;
       this.busy = false;
-      this.replyMentionsRef.current = undefined;
-      this.pendingAudiosRef.current = [];
-      this.pendingVoiceCaptionRef.current = false;
+      this.turn.clearInboundScratch();
     }
   }
 }
@@ -909,6 +890,15 @@ export class SessionManager {
   private sessions = new Map<string, ChatSession>();
   private groupBuffers = new Map<string, Message[]>();
   private maintainerSeen = new Map<string, SeenStore>();
+
+  private pruneSessions(): void {
+    const maxSessions = 500;
+    while (this.sessions.size > maxSessions) {
+      const oldest = this.sessions.keys().next().value as string | undefined;
+      if (!oldest) break;
+      this.sessions.delete(oldest);
+    }
+  }
 
   constructor(
     private client: WeChatClient,
@@ -957,6 +947,7 @@ export class SessionManager {
 
     for (const msg of unseen) {
       const text = msg.content?.trim() ?? "";
+      let handledByMaintainerCommand = true;
       if (text) {
         const outcome = await this.escalation.handleMaintainerMessage(
           chatId,
@@ -965,9 +956,12 @@ export class SessionManager {
         );
         if (outcome === "chat") {
           forAgent.push(msg.localId);
+          handledByMaintainerCommand = false;
         }
       }
-      seen.add(messageKey(msg.localId));
+      if (handledByMaintainerCommand) {
+        seen.add(messageKey(msg.localId));
+      }
     }
     seen.persist();
 
@@ -990,6 +984,7 @@ export class SessionManager {
         this.escalation,
       );
       this.sessions.set(chatId, session);
+      this.pruneSessions();
     }
     return session;
   }

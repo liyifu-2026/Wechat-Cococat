@@ -46,8 +46,11 @@ function trimEventsFile(): void {
     const lines = raw.trim().split("\n").filter(Boolean);
     const tail = lines.slice(-MAX_EVENT_LINES);
     writeFileSync(path, `${tail.join("\n")}\n`, "utf8");
-  } catch {
-    // ignore
+  } catch (err) {
+    console.warn(
+      "[pi-wechat] trim events file failed:",
+      err instanceof Error ? err.message : err,
+    );
   }
 }
 

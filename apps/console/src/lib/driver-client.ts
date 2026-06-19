@@ -1,8 +1,7 @@
 import { invoke } from "@tauri-apps/api/core"
 import { DRIVER_BASE_URL } from "@/lib/cococat-endpoints"
-import { shouldUseDriverProxy } from "@/lib/driver-proxy-routing"
-import { getHttpFetch } from "@/lib/tauri-fetch"
 import { readCococatToken } from "@/lib/stack-client"
+import { isTauri } from "@/lib/tauri-window"
 import type {
   DriverChat,
   DriverContact,
@@ -27,9 +26,26 @@ type DriverResponse = {
   blob: () => Promise<Blob>
 }
 
+type DriverProxyResponse = {
+  status: number
+  body?: unknown
+  text?: string | null
+  base64?: string | null
+  contentType?: string | null
+}
+
 function parseProxyErrorStatus(message: string): number {
   const match = /^Driver API \[(\d+)\]:/.exec(message)
   return match ? Number(match[1]) : 502
+}
+
+function base64ToBlob(base64: string, contentType?: string | null): Blob {
+  const binary = atob(base64)
+  const bytes = new Uint8Array(binary.length)
+  for (let i = 0; i < binary.length; i += 1) {
+    bytes[i] = binary.charCodeAt(i)
+  }
+  return new Blob([bytes], { type: contentType ?? "application/octet-stream" })
 }
 
 async function driverFetchViaInvoke(
@@ -41,14 +57,47 @@ async function driverFetchViaInvoke(
     const data = await invoke<unknown>("driver_fetch", {
       req: { path, method: method.toUpperCase(), body: body ?? null },
     })
+    if (
+      data &&
+      typeof data === "object" &&
+      "status" in data &&
+      typeof (data as DriverProxyResponse).status === "number"
+    ) {
+      const proxy = data as DriverProxyResponse
+      return {
+        ok: proxy.status >= 200 && proxy.status < 300,
+        status: proxy.status,
+        json: async <T>() => (proxy.body ?? proxy.text ?? null) as T,
+        text: async () =>
+          typeof proxy.text === "string"
+            ? proxy.text
+            : proxy.body == null
+              ? ""
+              : JSON.stringify(proxy.body),
+        blob: async () => {
+          if (!proxy.base64) {
+            const text =
+              typeof proxy.text === "string"
+                ? proxy.text
+                : proxy.body == null
+                  ? ""
+                  : JSON.stringify(proxy.body)
+            return new Blob([text], {
+              type: proxy.contentType ?? "application/json",
+            })
+          }
+          return base64ToBlob(proxy.base64, proxy.contentType)
+        },
+      }
+    }
+
+    // Backward-compatible shape for tests that mock driver_fetch directly.
     return {
       ok: true,
       status: 200,
       json: async <T>() => data as T,
       text: async () => (typeof data === "string" ? data : JSON.stringify(data)),
-      blob: async () => {
-        throw new Error("driver_fetch proxy does not support blob()")
-      },
+      blob: async () => new Blob([JSON.stringify(data)]),
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
@@ -73,12 +122,11 @@ async function driverFetchViaHttp(
   init?: RequestInit,
 ): Promise<DriverResponse> {
   const token = await readCococatToken()
-  const httpFetch = await getHttpFetch()
   const headers = {
     Authorization: `Bearer ${token}`,
     ...(init?.headers ?? {}),
   }
-  const res = await httpFetch(`${DRIVER_BASE_URL}${path}`, { ...init, headers })
+  const res = await fetch(`${DRIVER_BASE_URL}${path}`, { ...init, headers })
   return {
     ok: res.ok,
     status: res.status,
@@ -99,12 +147,29 @@ function parseRequestBody(init?: RequestInit): unknown | undefined {
 
 async function driverFetch(path: string, init?: RequestInit): Promise<DriverResponse> {
   const method = (init?.method ?? "GET").toUpperCase()
+  const maxAttempts = method === "GET" ? 3 : 2
+  let lastError: unknown
 
-  if (shouldUseDriverProxy(path)) {
-    return driverFetchViaInvoke(path, method, parseRequestBody(init))
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      const res = isTauri()
+        ? await driverFetchViaInvoke(path, method, parseRequestBody(init))
+        : await driverFetchViaHttp(path, init)
+      if (
+        res.ok ||
+        ![0, 408, 429, 500, 502, 503, 504].includes(res.status) ||
+        attempt === maxAttempts
+      ) {
+        return res
+      }
+    } catch (err) {
+      lastError = err
+      if (attempt === maxAttempts) throw err
+    }
+    await new Promise((resolve) => setTimeout(resolve, 150 * attempt))
   }
 
-  return driverFetchViaHttp(path, init)
+  throw lastError instanceof Error ? lastError : new Error(String(lastError))
 }
 
 /** Cached session login state — no a11y probe (safe for polling). */
@@ -254,7 +319,21 @@ export async function findDriverContacts(name: string): Promise<DriverContact[]>
   return res.json<DriverContact[]>()
 }
 
-const avatarObjectUrlCache = new Map<string, string>()
+const AVATAR_OBJECT_URL_TTL_MS = 10 * 60 * 1000
+
+const avatarObjectUrlCache = new Map<
+  string,
+  { objectUrl: string; fetchedAt: number }
+>()
+
+function sweepExpiredAvatarObjectUrls(now = Date.now()): void {
+  for (const [key, cached] of avatarObjectUrlCache) {
+    if (now - cached.fetchedAt >= AVATAR_OBJECT_URL_TTL_MS) {
+      URL.revokeObjectURL(cached.objectUrl)
+      avatarObjectUrlCache.delete(key)
+    }
+  }
+}
 
 /** Fetch avatar bytes via Driver CDN proxy; returns blob object URL for `<img>`. */
 export async function fetchDriverAvatarObjectUrl(
@@ -263,16 +342,23 @@ export async function fetchDriverAvatarObjectUrl(
   const url = smallHeadUrl.trim()
   if (!url) return null
   const cached = avatarObjectUrlCache.get(url)
-  if (cached) return cached
+  const now = Date.now()
+  sweepExpiredAvatarObjectUrls(now)
+  if (cached && now - cached.fetchedAt < AVATAR_OBJECT_URL_TTL_MS) {
+    return cached.objectUrl
+  }
 
   const res = await driverFetch(
-    `/api/contacts/avatar?url=${encodeURIComponent(url)}`,
+    `/api/contacts/avatar?url=${encodeURIComponent(url)}${
+      cached ? "&refresh=true" : ""
+    }`,
   )
   if (!res.ok) return null
   const blob = await res.blob()
   if (!blob.size) return null
+  if (cached) URL.revokeObjectURL(cached.objectUrl)
   const objectUrl = URL.createObjectURL(blob)
-  avatarObjectUrlCache.set(url, objectUrl)
+  avatarObjectUrlCache.set(url, { objectUrl, fetchedAt: now })
   return objectUrl
 }
 
@@ -306,6 +392,53 @@ export async function sendDriverMessage(params: {
     const errBody = await res.text().catch(() => "")
     throw new Error(
       errBody ? `send HTTP ${res.status}: ${errBody}` : `send HTTP ${res.status}`,
+    )
+  }
+  return res.json<DriverSendResult>()
+}
+
+const MAX_SEND_IMAGE_BYTES = 5 * 1024 * 1024
+
+export async function sendDriverImage(params: {
+  chatId: string
+  data: string
+  mimeType: string
+  clientMsgId?: string
+}): Promise<DriverSendResult> {
+  const chatId = params.chatId.trim()
+  if (!chatId || !params.data) {
+    return { success: false, error: "chatId and data required" }
+  }
+
+  let data = params.data
+  if (data.startsWith("data:")) {
+    const commaIdx = data.indexOf(",")
+    if (commaIdx === -1) return { success: false, error: "invalid data URL" }
+    data = data.substring(commaIdx + 1)
+  }
+
+  const approxBytes = Math.ceil(data.length * 0.75)
+  if (approxBytes > MAX_SEND_IMAGE_BYTES) {
+    return { success: false, error: "image exceeds 5MB limit" }
+  }
+
+  const body: Record<string, unknown> = {
+    chatId,
+    image: { data, mimeType: params.mimeType },
+  }
+  if (params.clientMsgId?.trim()) {
+    body.clientMsgId = params.clientMsgId.trim()
+  }
+
+  const res = await driverFetch("/api/messages/send", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  })
+  if (!res.ok) {
+    const errBody = await res.text().catch(() => "")
+    throw new Error(
+      errBody ? `send image HTTP ${res.status}: ${errBody}` : `send image HTTP ${res.status}`,
     )
   }
   return res.json<DriverSendResult>()
@@ -423,5 +556,3 @@ export async function openDriverLoginSocket(
 export async function refreshDriverTokenCache(): Promise<void> {
   await invoke<string>("refresh_driver_token_cache")
 }
-
-export { shouldUseDriverProxy } from "@/lib/driver-proxy-routing"

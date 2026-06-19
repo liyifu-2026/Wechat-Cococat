@@ -4,6 +4,13 @@ use serde::Deserialize;
 use crate::ia::types::Session;
 use crate::sessions::manager;
 
+fn session_json(session: Session) -> serde_json::Value {
+    serde_json::to_value(session).unwrap_or_else(|err| {
+        tracing::error!("[sessions] failed to serialize session: {err}");
+        serde_json::json!({ "error": "Failed to serialize session" })
+    })
+}
+
 pub async fn list_sessions() -> Json<Vec<Session>> {
     Json(manager::list_sessions())
 }
@@ -15,7 +22,7 @@ pub struct CreateParams {
 
 pub async fn create_session(Json(input): Json<CreateParams>) -> Json<serde_json::Value> {
     match manager::create_session(&input.name).await {
-        Ok(session) => Json(serde_json::to_value(session).unwrap()),
+        Ok(session) => Json(session_json(session)),
         Err(e) => Json(serde_json::json!({ "error": e })),
     }
 }
@@ -26,14 +33,14 @@ pub async fn get_session(Path(id): Path<String>) -> Json<Option<Session>> {
 
 pub async fn start_session(Path(id): Path<String>) -> Json<serde_json::Value> {
     match manager::start_session(&id).await {
-        Ok(session) => Json(serde_json::to_value(session).unwrap()),
+        Ok(session) => Json(session_json(session)),
         Err(e) => Json(serde_json::json!({ "error": e })),
     }
 }
 
 pub async fn stop_session(Path(id): Path<String>) -> Json<serde_json::Value> {
     match manager::stop_session(&id).await {
-        Ok(session) => Json(serde_json::to_value(session).unwrap()),
+        Ok(session) => Json(session_json(session)),
         Err(e) => Json(serde_json::json!({ "error": e })),
     }
 }

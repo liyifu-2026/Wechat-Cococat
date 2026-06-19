@@ -24,12 +24,12 @@ pub fn driver_up() -> bool {
     DRIVER_UP.load(Ordering::Relaxed)
 }
 
-pub fn driver_ws_events_url() -> String {
+pub fn driver_ws_events_url(token: &str) -> String {
     let base = driver_proxy::driver_base_url();
     let ws_base = base
         .replacen("https://", "wss://", 1)
         .replacen("http://", "ws://", 1);
-    format!("{ws_base}/api/ws/events")
+    format!("{ws_base}/api/ws/events?token={token}")
 }
 
 fn event_channel_for_type(event_type: &str) -> String {
@@ -56,12 +56,16 @@ async fn run_bridge_loop(app: AppHandle) {
             continue;
         }
 
-        if !driver_proxy::has_cached_token() {
-            sleep(Duration::from_secs(SILENT_SLEEP_SECS)).await;
-            continue;
-        }
+        let token = match driver_proxy::refresh_token_from_disk() {
+            Ok(token) => token,
+            Err(err) => {
+                eprintln!("[event-bridge] token unavailable: {err}");
+                sleep(Duration::from_secs(SILENT_SLEEP_SECS)).await;
+                continue;
+            }
+        };
 
-        let url = driver_ws_events_url();
+        let url = driver_ws_events_url(&token);
         match connect_async(&url).await {
             Ok((ws_stream, _)) => {
                 backoff_secs = 1;
@@ -88,6 +92,7 @@ async fn run_bridge_loop(app: AppHandle) {
                 }
             }
             Err(err) => {
+                driver_proxy::invalidate_token_cache();
                 eprintln!("[event-bridge] ws connect failed: {err}");
             }
         }
@@ -127,8 +132,8 @@ mod tests {
     fn ws_url_from_http_base() {
         std::env::set_var("AGENT_WECHAT_URL", "http://127.0.0.1:6174");
         assert_eq!(
-            driver_ws_events_url(),
-            "ws://127.0.0.1:6174/api/ws/events"
+            driver_ws_events_url("abc123"),
+            "ws://127.0.0.1:6174/api/ws/events?token=abc123"
         );
     }
 }

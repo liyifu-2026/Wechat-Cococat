@@ -15,6 +15,15 @@ export async function addPendingLocalIds(
   await redis.sadd(pendingKey(chatId), ...localIds.map(String));
 }
 
+/** Requeue a drained snapshot before a retry so inbound messages are not lost. */
+export async function restorePendingLocalIds(
+  redis: Redis,
+  chatId: string,
+  localIds: number[],
+): Promise<void> {
+  await addPendingLocalIds(redis, chatId, localIds);
+}
+
 /** 原子 drain：取出并清空 pending SET。 */
 export async function drainPendingLocalIds(
   redis: Redis,

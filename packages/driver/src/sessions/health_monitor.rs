@@ -1,6 +1,7 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
+use crate::db::get_db;
 use crate::ia::identify_states;
 use crate::sessions::manager::get_session;
 use crate::tools::a11y::get_a11y_desktop;
@@ -65,6 +66,7 @@ pub fn spawn_health_monitor() {
 
         let mut last_identified = Instant::now();
         let mut was_running = false;
+        let mut last_known_logged_in: Option<bool> = None;
         let mut restart_count: u32 = 0;
         let mut window_start = Instant::now();
         let mut waiting_restart_since: Option<Instant> = None;
@@ -104,6 +106,16 @@ pub fn spawn_health_monitor() {
                         );
                         was_running = false;
                         waiting_restart_since = Some(Instant::now());
+                        // Reset login state so Console doesn't report a stale
+                        // "logged_in" while WeChat is restarting to login screen.
+                        let db = get_db();
+                        db.execute(
+                            "UPDATE sessions SET login_state = 'logged_out', logged_in_user = NULL, updated_at = ?1 WHERE name = 'default'",
+                            rusqlite::params![chrono::Utc::now().to_rfc3339()],
+                        ).ok();
+                        tracing::info!(
+                            "[health] Reset login_state → logged_out after WeChat crash"
+                        );
                     }
 
                     // Handle restart with crash loop protection
@@ -153,14 +165,38 @@ pub fn spawn_health_monitor() {
                 }
             };
 
-            let screenshot = capture_screenshot(&exec_options)
-                .await
-                .unwrap_or_default();
+            let screenshot = capture_screenshot(&exec_options).await.unwrap_or_default();
             let identified = identify_states(&a11y, &screenshot);
 
             if identified.main_window.is_some() {
                 // State identified — WeChat is responsive
                 last_identified = Instant::now();
+
+                let is_logged_in = matches!(
+                    identified.main_window.as_ref().map(|m| m.state_id.as_str()),
+                    Some("chat") | Some("chat_open")
+                );
+                if last_known_logged_in != Some(is_logged_in) {
+                    last_known_logged_in = Some(is_logged_in);
+                    let login_state = if is_logged_in {
+                        "logged_in"
+                    } else {
+                        "logged_out"
+                    };
+                    let logged_in_user: Option<&str> = if is_logged_in {
+                        session.logged_in_user.as_deref()
+                    } else {
+                        None
+                    };
+                    let db = get_db();
+                    db.execute(
+                        "UPDATE sessions SET login_state = ?1, logged_in_user = ?2, updated_at = ?3 WHERE name = 'default'",
+                        rusqlite::params![login_state, logged_in_user, chrono::Utc::now().to_rfc3339()],
+                    ).ok();
+                    tracing::info!(
+                        "[health] login_state → {login_state} (is_logged_in={is_logged_in})"
+                    );
+                }
             } else {
                 // No state identified — check timeout
                 check_and_kill(wechat_pid, &last_identified);
@@ -180,13 +216,13 @@ fn check_and_kill(wechat_pid: i64, last_identified: &Instant) {
         );
 
         let result = std::process::Command::new("kill")
-            .args(["-9", &wechat_pid.to_string()])
+            .args(["-TERM", &wechat_pid.to_string()])
             .output();
 
         match result {
             Ok(output) if output.status.success() => {
                 tracing::info!(
-                    "[health] Killed WeChat pid={}, will restart automatically",
+                    "[health] Sent SIGTERM to WeChat pid={}, will restart automatically",
                     wechat_pid
                 );
             }

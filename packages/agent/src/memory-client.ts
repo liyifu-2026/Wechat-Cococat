@@ -71,7 +71,11 @@ export class MemoryClient {
         signal: AbortSignal.timeout(2000),
       });
       return resp.ok;
-    } catch {
+    } catch (err) {
+      console.warn(
+        `[pi-wechat] memory health check failed at ${this.opts.gatewayUrl}:`,
+        err instanceof Error ? err.message : err,
+      );
       return false;
     }
   }
@@ -145,7 +149,11 @@ export class MemoryClient {
         8000,
       );
       return search.results?.trim() ?? "";
-    } catch {
+    } catch (err) {
+      console.warn(
+        `[pi-wechat] memory L3 fetch failed for ${sessionKey}:`,
+        err instanceof Error ? err.message : err,
+      );
       return "";
     }
   }

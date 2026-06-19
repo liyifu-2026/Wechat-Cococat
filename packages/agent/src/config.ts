@@ -4,6 +4,7 @@ import { WikiClient } from "./wiki-client.js";
 import { createMemoryClient, type MemoryClient } from "./memory-client.js";
 import { MemoryHealthMonitor } from "./memory-health.js";
 import { isQueueEnabled } from "./queue/redis.js";
+import { resolvePollFallbackMs } from "./effective-config.js";
 
 export type PiWeChatConfig = {
   serverUrl: string;
@@ -61,7 +62,7 @@ export function loadConfig(): PiWeChatConfig {
       process.env.LLM_MODEL ??
       "claude-sonnet-4-20250514",
     systemPrompt: process.env.WECHAT_PI_SYSTEM_PROMPT,
-    pollFallbackMs: Number(process.env.WECHAT_PI_POLL_MS ?? "30000"),
+    pollFallbackMs: resolvePollFallbackMs(),
     historyLimit: Number(process.env.WECHAT_PI_HISTORY_LIMIT ?? "40"),
     group,
     wikiEnabled,

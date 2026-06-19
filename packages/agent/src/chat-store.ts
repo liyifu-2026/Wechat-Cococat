@@ -46,8 +46,11 @@ function defaultWikiConfig(): ChatWikiConfig {
           projects: raw.projects.filter((p): p is string => typeof p === "string"),
         };
       }
-    } catch {
-      // fall through
+    } catch (err) {
+      console.warn(
+        `[pi-wechat] failed to load default wiki config ${wikiDefault}:`,
+        err instanceof Error ? err.message : err,
+      );
     }
   }
   const envProject = process.env.WIKI_PROJECT_ID?.trim();
@@ -71,8 +74,11 @@ function loadWikiConfig(wikiPath: string): ChatWikiConfig {
         projects: raw.projects.filter((p): p is string => typeof p === "string"),
       };
     }
-  } catch {
-    // fall through
+  } catch (err) {
+    console.warn(
+      `[pi-wechat] failed to load chat wiki config ${wikiPath}; using defaults:`,
+      err instanceof Error ? err.message : err,
+    );
   }
   return defaultWikiConfig();
 }

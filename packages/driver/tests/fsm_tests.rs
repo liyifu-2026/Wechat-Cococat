@@ -77,7 +77,10 @@ async fn test_login_account_identified_correctly() {
     let mw = identified
         .main_window
         .expect("should identify a main window state");
-    assert_eq!(mw.state_id, "login_account", "should be login_account state");
+    assert_eq!(
+        mw.state_id, "login_account",
+        "should be login_account state"
+    );
     assert!(mw.frame.is_some(), "should have frame hint");
 }
 
@@ -90,12 +93,11 @@ async fn test_login_plan_clicks_log_in_on_account_view() {
     assert!(identified.main_window.is_some());
 
     let plan = LoginPlan;
-    let params = LoginParams {
-        new_account: false,
-    };
+    let params = LoginParams { new_account: false };
     let mut state = AppState::default();
     state.main_window.view = MainWindowView::LoginAccount;
     let mut plan_state = plan.initial_plan_state();
+    plan_state.emitted_login_account = true;
 
     let selected = plan
         .select_action(
@@ -114,8 +116,10 @@ async fn test_login_plan_clicks_log_in_on_account_view() {
     match &sel.action {
         Action::ClickSelector { selector } => {
             assert!(
-                selector.contains("Log In") || selector.contains("Open WeChat"),
-                "expected selector matching 'Log In' or 'Open WeChat', got: {selector}"
+                selector.contains("Log In")
+                    && selector.contains("Open WeChat")
+                    && selector.contains("Enter Weixin"),
+                "expected selector matching login buttons, got: {selector}"
             );
         }
         other => panic!("expected ClickSelector, got {:?}", other),
@@ -130,15 +134,21 @@ async fn test_login_plan_clicks_switch_account_when_new_account() {
     let identified = identify_states(&a11y, screenshot);
 
     let plan = LoginPlan;
-    let params = LoginParams {
-        new_account: true,
-    };
+    let params = LoginParams { new_account: true };
     let mut state = AppState::default();
     state.main_window.view = MainWindowView::LoginAccount;
     let mut plan_state = plan.initial_plan_state();
+    plan_state.emitted_login_account = true;
 
     let selected = plan
-        .select_action(&state, &params, &identified, &mut plan_state, &a11y, "test-session")
+        .select_action(
+            &state,
+            &params,
+            &identified,
+            &mut plan_state,
+            &a11y,
+            "test-session",
+        )
         .await;
 
     assert!(selected.is_some());
@@ -163,7 +173,10 @@ async fn test_mention_popup_identified_from_fixture() {
 
     let identified = identify_states(&a11y, "");
 
-    assert!(identified.main_window.is_some(), "should have main window state");
+    assert!(
+        identified.main_window.is_some(),
+        "should have main window state"
+    );
     assert_eq!(
         identified.main_window.unwrap().state_id,
         "chat_open",
@@ -191,6 +204,7 @@ async fn test_send_message_enters_mentioning_phase_with_mentions() {
         image_mime: None,
         file_path: None,
         mentions: vec!["Leaif".into()],
+        session: None,
     };
     let mut state = AppState::default();
     state.main_window.view = MainWindowView::ChatOpen;
@@ -236,6 +250,7 @@ async fn test_send_message_skips_mentioning_without_mentions() {
         image_mime: None,
         file_path: None,
         mentions: Vec::new(),
+        session: None,
     };
     let mut state = AppState::default();
     state.main_window.view = MainWindowView::ChatOpen;
@@ -251,10 +266,13 @@ async fn test_send_message_skips_mentioning_without_mentions() {
     let sel = selected.unwrap();
     match &sel.action {
         Action::Sequence { actions } => {
-            let has_mention = actions.iter().any(|a| {
-                matches!(a, Action::Type { text, .. } if text.starts_with('@'))
-            });
-            assert!(!has_mention, "should NOT include @mention when mentions list is empty");
+            let has_mention = actions
+                .iter()
+                .any(|a| matches!(a, Action::Type { text, .. } if text.starts_with('@')));
+            assert!(
+                !has_mention,
+                "should NOT include @mention when mentions list is empty"
+            );
         }
         _ => {}
     }
@@ -273,6 +291,7 @@ async fn test_mention_handling_types_target_name() {
         image_mime: None,
         file_path: None,
         mentions: vec!["Leaif".into()],
+        session: None,
     };
     let mut state = AppState::default();
     state.main_window.view = MainWindowView::ChatOpen;
@@ -327,6 +346,7 @@ async fn test_mentioning_phase_defers_send_to_inputting() {
         image_mime: None,
         file_path: None,
         mentions: vec!["Leaif".into(), "\u{5c0f}\u{767d}".into()],
+        session: None,
     };
     let mut state = AppState::default();
     state.main_window.view = MainWindowView::ChatOpen;

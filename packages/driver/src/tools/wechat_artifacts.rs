@@ -76,11 +76,8 @@ pub fn write_artifact(chat_id: &str, local_id: i64, media: &MediaResult) -> Opti
         return None;
     }
     let data_b64 = media.data.as_ref()?;
-    let bytes = base64::Engine::decode(
-        &base64::engine::general_purpose::STANDARD,
-        data_b64,
-    )
-    .ok()?;
+    let bytes =
+        base64::Engine::decode(&base64::engine::general_purpose::STANDARD, data_b64).ok()?;
     let ext = extension_for_media(media)?;
     let path = artifact_absolute_path(chat_id, local_id, ext);
     if let Some(parent) = path.parent() {

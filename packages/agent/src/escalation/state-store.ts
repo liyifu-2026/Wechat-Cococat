@@ -49,7 +49,11 @@ export function loadChatEscalationState(chatId: string): ChatEscalationState {
           ? raw.probeStreak
           : 0,
     };
-  } catch {
+  } catch (err) {
+    console.warn(
+      `[pi-wechat] failed to load escalation state for ${chatId}; using defaults:`,
+      err instanceof Error ? err.message : err,
+    );
     return { ...DEFAULT_CHAT_STATE };
   }
 }
@@ -78,7 +82,11 @@ function loadMutes(): MuteEntry[] {
   try {
     const raw = JSON.parse(readFileSync(path, "utf8")) as MuteFile;
     return Array.isArray(raw.entries) ? raw.entries : [];
-  } catch {
+  } catch (err) {
+    console.warn(
+      "[pi-wechat] failed to load mutes.json; active mutes ignored:",
+      err instanceof Error ? err.message : err,
+    );
     return [];
   }
 }
@@ -173,8 +181,11 @@ export function loadMaintainerPending(): MaintainerPending | null {
       }
       return raw;
     }
-  } catch {
-    // ignore
+  } catch (err) {
+    console.warn(
+      "[pi-wechat] failed to load maintainer pending state:",
+      err instanceof Error ? err.message : err,
+    );
   }
   return null;
 }

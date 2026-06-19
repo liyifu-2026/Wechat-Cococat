@@ -5,6 +5,7 @@ import {
   splitForWeChatFallback,
   stripReasoningLeaks,
 } from "./reasoning.js";
+import { humanizeReplyText } from "./humanize.js";
 import { stripLeadingAtMentions } from "./mention-names.js";
 import { prepareServiceOutboundText } from "./stealth-send.js";
 import type { DelayRange } from "./style.js";
@@ -18,7 +19,7 @@ function extractAssistantText(agent: Agent): string | undefined {
     if (msg.role !== "assistant") continue;
     const content = msg.content;
     if (typeof content === "string" && content.trim()) {
-      return stripReasoningLeaks(content.trim());
+      return humanizeReplyText(stripReasoningLeaks(content.trim()));
     }
     if (Array.isArray(content)) {
       const text = content
@@ -31,7 +32,7 @@ function extractAssistantText(agent: Agent): string | undefined {
         .map((p) => p.text)
         .join("")
         .trim();
-      if (text) return stripReasoningLeaks(text);
+      if (text) return humanizeReplyText(stripReasoningLeaks(text));
     }
   }
   return undefined;
@@ -56,7 +57,7 @@ export async function sendAssistantTextFallback(
   const text = extractAssistantText(agent);
   if (!text) return [];
 
-  const parts = splitForWeChatFallback(text, maxSends);
+  const parts = splitForWeChatFallback(humanizeReplyText(text), maxSends);
   const sent: string[] = [];
 
   for (let i = 0; i < parts.length; i++) {

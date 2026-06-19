@@ -3,20 +3,23 @@ pub mod rate_limiter;
 pub mod sys_impl;
 pub mod traits;
 
-use base64::Engine;
 use crate::context::Context;
-use crate::ia::{find_state_by_id, identify_states};
-use crate::ia::types::*;
-use crate::effects::collect_effects;
 use crate::db::get_db;
+use crate::effects::collect_effects;
+use crate::ia::types::*;
+use crate::ia::{find_state_by_id, identify_states};
 use crate::tools::wechat_db::{find_account_dir, find_wechat_pid, resolve_account_dir};
+use base64::Engine;
 use flicker::FlickeringDetector;
-use traits::{Executor, Observer};
+use std::collections::HashMap;
+use std::sync::{Arc, LazyLock};
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
+use traits::{Executor, Observer};
 
-/// Only one plan can run at a time — they all drive the GUI.
-static PLAN_LOCK: Mutex<()> = Mutex::const_new(());
+/// Only one physical UI action per desktop session can execute at a time.
+static EXECUTE_LOCKS: LazyLock<Mutex<HashMap<String, Arc<Mutex<()>>>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
 
 pub struct ExecutionResult {
     pub success: bool,
@@ -26,6 +29,48 @@ pub struct ExecutionResult {
 const EXECUTION_TIMEOUT_MS: u64 = 300_000; // 5 minutes
 const UNKNOWN_STATE_TIMEOUT_MS: u64 = 60_000; // 1 minute
 const MAX_STEPS: u32 = 500;
+const MAX_OBSERVE_FAILURES: u32 = 20;
+const MAX_SNAPSHOT_DIRS: usize = 100;
+
+fn prune_snapshot_dirs(root: &str) {
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return;
+    };
+    let mut dirs: Vec<_> = entries
+        .flatten()
+        .filter_map(|entry| {
+            let path = entry.path();
+            if !path.is_dir() {
+                return None;
+            }
+            let name = path.file_name()?.to_string_lossy().parse::<i64>().ok()?;
+            Some((name, path))
+        })
+        .collect();
+    dirs.sort_by_key(|(name, _)| *name);
+    let remove_count = dirs.len().saturating_sub(MAX_SNAPSHOT_DIRS);
+    for (_, path) in dirs.into_iter().take(remove_count) {
+        if let Err(e) = std::fs::remove_dir_all(&path) {
+            tracing::warn!("[effects] failed to remove old snapshot {:?}: {}", path, e);
+        }
+    }
+}
+
+async fn execute_lock_for_session(session_id: &str) -> Arc<Mutex<()>> {
+    let mut locks = EXECUTE_LOCKS.lock().await;
+    locks
+        .entry(session_id.to_string())
+        .or_insert_with(|| Arc::new(Mutex::new(())))
+        .clone()
+}
+
+struct ResumeMonitoringOnDrop;
+
+impl Drop for ResumeMonitoringOnDrop {
+    fn drop(&mut self) {
+        crate::sessions::health_monitor::resume_monitoring();
+    }
+}
 
 /// Run the FSM execution loop with a generic plan, observer, and executor.
 ///
@@ -52,47 +97,59 @@ where
     PS: Send,
     PA: Send,
 {
-    let _plan_guard = PLAN_LOCK.lock().await;
-
-    crate::sessions::health_monitor::pause_monitoring();
-    struct ResumeOnDrop;
-    impl Drop for ResumeOnDrop {
-        fn drop(&mut self) {
-            crate::sessions::health_monitor::resume_monitoring();
-        }
-    }
-    let _health_guard = ResumeOnDrop;
+    let session_id = context.session_id.clone();
 
     let mut plan_state = plan.initial_plan_state();
-    let session_id = context.session_id.clone();
 
     let execution_start = std::time::Instant::now();
     let mut unknown_state_since: Option<std::time::Instant> = None;
     let mut flicker_detector = FlickeringDetector::new();
+    let mut observe_failures = 0u32;
+    let mut last_identified = "none".to_string();
+    let mut last_action = "none".to_string();
 
     for step in 0..MAX_STEPS {
         if execution_start.elapsed().as_millis() as u64 > EXECUTION_TIMEOUT_MS {
-            return (ExecutionResult {
-                success: false,
-                error: Some(format!(
-                    "Execution timeout after {}s",
-                    execution_start.elapsed().as_secs()
-                )),
-            }, plan_state);
+            return (
+                ExecutionResult {
+                    success: false,
+                    error: Some(format!(
+                        "Execution timeout after {}s",
+                        execution_start.elapsed().as_secs()
+                    )),
+                },
+                plan_state,
+            );
         }
 
         if cancel.is_cancelled() {
-            return (ExecutionResult {
-                success: false,
-                error: Some("Aborted".to_string()),
-            }, plan_state);
+            return (
+                ExecutionResult {
+                    success: false,
+                    error: Some("Aborted".to_string()),
+                },
+                plan_state,
+            );
         }
 
         // 1. OBSERVE
         let obs = match observer.observe().await {
-            Ok(o) => o,
+            Ok(o) => {
+                observe_failures = 0;
+                o
+            }
             Err(e) => {
+                observe_failures += 1;
                 tracing::warn!("[exec] observe failed on step {step}: {e}");
+                if observe_failures >= MAX_OBSERVE_FAILURES {
+                    return (ExecutionResult {
+                        success: false,
+                        error: Some(format!(
+                            "Observe failed {observe_failures} consecutive times for plan={} session={session_id}: {e}",
+                            plan.id()
+                        )),
+                    }, plan_state);
+                }
                 tokio::time::sleep(std::time::Duration::from_millis(500)).await;
                 continue;
             }
@@ -106,6 +163,29 @@ where
 
         // 2. IDENTIFY
         let identified = identify_states(&a11y, &screenshot);
+        last_identified = format!(
+            "main={}, popup={}, contactCard={}, settings={}",
+            identified
+                .main_window
+                .as_ref()
+                .map(|s| s.state_id.as_str())
+                .unwrap_or("none"),
+            identified
+                .popup
+                .as_ref()
+                .map(|s| s.state_id.as_str())
+                .unwrap_or("none"),
+            identified
+                .contact_card
+                .as_ref()
+                .map(|s| s.state_id.as_str())
+                .unwrap_or("none"),
+            identified
+                .settings
+                .as_ref()
+                .map(|s| s.state_id.as_str())
+                .unwrap_or("none"),
+        );
 
         if identified.main_window.is_none() {
             if unknown_state_since.is_none() {
@@ -114,13 +194,16 @@ where
             let elapsed = unknown_state_since.unwrap().elapsed();
             if elapsed.as_millis() as u64 > UNKNOWN_STATE_TIMEOUT_MS {
                 tracing::error!("[exec] Unknown state timeout after {}s", elapsed.as_secs());
-                return (ExecutionResult {
-                    success: false,
-                    error: Some(format!(
-                        "Unknown state for {}s - no matching IAState found",
-                        elapsed.as_secs()
-                    )),
-                }, plan_state);
+                return (
+                    ExecutionResult {
+                        success: false,
+                        error: Some(format!(
+                            "Unknown state for {}s - no matching IAState found",
+                            elapsed.as_secs()
+                        )),
+                    },
+                    plan_state,
+                );
             }
             tracing::warn!("[exec] Unknown state ({}s), waiting...", elapsed.as_secs());
             tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
@@ -131,10 +214,26 @@ where
 
         tracing::info!(
             "[exec] step={step} mainWindow={}, popup={}, contactCard={}, settings={}",
-            identified.main_window.as_ref().map(|s| s.state_id.as_str()).unwrap_or("none"),
-            identified.popup.as_ref().map(|s| s.state_id.as_str()).unwrap_or("none"),
-            identified.contact_card.as_ref().map(|s| s.state_id.as_str()).unwrap_or("none"),
-            identified.settings.as_ref().map(|s| s.state_id.as_str()).unwrap_or("none"),
+            identified
+                .main_window
+                .as_ref()
+                .map(|s| s.state_id.as_str())
+                .unwrap_or("none"),
+            identified
+                .popup
+                .as_ref()
+                .map(|s| s.state_id.as_str())
+                .unwrap_or("none"),
+            identified
+                .contact_card
+                .as_ref()
+                .map(|s| s.state_id.as_str())
+                .unwrap_or("none"),
+            identified
+                .settings
+                .as_ref()
+                .map(|s| s.state_id.as_str())
+                .unwrap_or("none"),
         );
 
         // 3. REDUCE
@@ -203,31 +302,38 @@ where
                 Effect::UpdateSessionLoginState => {
                     let logged_in = context.state.main_window.is_logged_in;
                     let logged_in_user: Option<String> = if logged_in {
-                        find_wechat_pid()
-                            .and_then(find_account_dir)
-                            .or_else(|| {
-                                context
-                                    .state
-                                    .main_window
-                                    .account_name
-                                    .as_deref()
-                                    .and_then(resolve_account_dir)
-                            })
+                        find_wechat_pid().and_then(find_account_dir).or_else(|| {
+                            context
+                                .state
+                                .main_window
+                                .account_name
+                                .as_deref()
+                                .and_then(resolve_account_dir)
+                        })
                     } else {
                         None
                     };
                     let db = get_db();
-                    db.execute(
+                    if let Err(e) = db.execute(
                         "UPDATE sessions SET login_state = ?1, logged_in_user = ?2, updated_at = datetime('now') WHERE id = ?3",
                         rusqlite::params![
                             if logged_in { "logged_in" } else { "logged_out" },
                             logged_in_user.as_deref(),
                             session_id,
                         ],
-                    ).ok();
+                    ) {
+                        tracing::error!(
+                            "[effects] failed to persist login state for session {}: {}",
+                            session_id,
+                            e
+                        );
+                    }
                 }
 
-                Effect::PopupAppeared { popup_type, message } => {
+                Effect::PopupAppeared {
+                    popup_type,
+                    message,
+                } => {
                     tracing::warn!(
                         "[effects] popup appeared: type={:?}, message={:?}",
                         popup_type,
@@ -242,12 +348,10 @@ where
                         }
                     }
                     let ts = chrono::Utc::now().timestamp();
-                    let dir = format!("/data/snapshots/{}", ts);
+                    let root = "/data/snapshots";
+                    let dir = format!("{root}/{}", ts);
                     if std::fs::create_dir_all(&dir).is_ok() {
-                        let _ = std::fs::write(
-                            format!("{dir}/screenshot.png"),
-                            &screenshot_bytes,
-                        );
+                        let _ = std::fs::write(format!("{dir}/screenshot.png"), &screenshot_bytes);
                         let meta = serde_json::json!({
                             "timestamp": ts,
                             "popup_type": serde_json::to_value(popup_type).unwrap_or_default(),
@@ -262,15 +366,12 @@ where
                             format!("{dir}/meta.json"),
                             serde_json::to_string_pretty(&meta).unwrap_or_default(),
                         );
+                        prune_snapshot_dirs(root);
                     }
                 }
 
                 Effect::ViewTransition { from, to } => {
-                    tracing::debug!(
-                        "[effects] view transition: {:?} -> {:?}",
-                        from,
-                        to
-                    );
+                    tracing::debug!("[effects] view transition: {:?} -> {:?}", from, to);
                 }
 
                 Effect::Fatal { reason } => {
@@ -280,10 +381,13 @@ where
         }
 
         if effects.iter().any(|e| matches!(e, Effect::Fatal { .. })) {
-            return (ExecutionResult {
-                success: false,
-                error: Some("session terminated by effect watcher".to_string()),
-            }, plan_state);
+            return (
+                ExecutionResult {
+                    success: false,
+                    error: Some("session terminated by effect watcher".to_string()),
+                },
+                plan_state,
+            );
         }
 
         // 5. PERSIST
@@ -311,33 +415,72 @@ where
                 .map(|s| format!("{:?}", s.action))
                 .unwrap_or_else(|| "none".to_string())
         );
+        last_action = selected
+            .as_ref()
+            .map(|s| format!("{:?}", s.action))
+            .unwrap_or_else(|| "none".to_string());
 
         // 7. EXECUTE — loop flattens Sequence, handles Emit, delegates physical actions
         if let Some(sel) = &selected {
-            dispatch_action(&sel.action, sel.frame.as_ref(), &a11y, executor, emit).await;
+            let execute_lock = execute_lock_for_session(&session_id).await;
+            let _execute_guard = execute_lock.lock().await;
+            crate::sessions::health_monitor::pause_monitoring();
+            let _health_guard = ResumeMonitoringOnDrop;
+            if let Err(e) =
+                dispatch_action(&sel.action, sel.frame.as_ref(), &a11y, executor, emit).await
+            {
+                return (
+                    ExecutionResult {
+                        success: false,
+                        error: Some(format!(
+                            "Executor failed for plan={} session={} action={}: {}",
+                            plan.id(),
+                            session_id,
+                            last_action,
+                            e
+                        )),
+                    },
+                    plan_state,
+                );
+            }
         }
 
         // 8. GOAL CHECK (after action)
         if plan.is_goal_reached(&context.state, &plan_state) {
             decay_success_if_send_message(plan.id());
-            return (ExecutionResult {
-                success: true,
-                error: None,
-            }, plan_state);
+            return (
+                ExecutionResult {
+                    success: true,
+                    error: None,
+                },
+                plan_state,
+            );
         }
 
         if selected.is_none() {
-            return (ExecutionResult {
-                success: false,
-                error: Some("No action selected".to_string()),
-            }, plan_state);
+            return (
+                ExecutionResult {
+                    success: false,
+                    error: Some("No action selected".to_string()),
+                },
+                plan_state,
+            );
         }
     }
 
-    (ExecutionResult {
-        success: false,
-        error: Some("Max steps reached".to_string()),
-    }, plan_state)
+    (
+        ExecutionResult {
+            success: false,
+            error: Some(format!(
+                "Max steps reached for plan={} session={} last_state=[{}] last_action={}",
+                plan.id(),
+                session_id,
+                last_identified,
+                last_action,
+            )),
+        },
+        plan_state,
+    )
 }
 
 async fn dispatch_action(
@@ -346,21 +489,19 @@ async fn dispatch_action(
     a11y: &A11yNode,
     executor: &dyn Executor,
     emit: &(dyn Fn(SubscriptionEvent) + Send + Sync),
-) {
+) -> Result<(), String> {
     match action {
         Action::Emit { event } => {
             emit(event.clone());
+            Ok(())
         }
         Action::Sequence { actions } => {
             for a in actions {
-                Box::pin(dispatch_action(a, frame, a11y, executor, emit)).await;
+                Box::pin(dispatch_action(a, frame, a11y, executor, emit)).await?;
             }
+            Ok(())
         }
-        physical => {
-            if let Err(e) = executor.execute(physical, frame, a11y).await {
-                tracing::warn!("[exec] executor error: {e}");
-            }
-        }
+        physical => executor.execute(physical, frame, a11y).await,
     }
 }
 

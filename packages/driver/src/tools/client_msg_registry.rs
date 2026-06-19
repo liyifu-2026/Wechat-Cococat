@@ -50,11 +50,7 @@ pub fn try_resolve_after_send(
     resolve_pending_for_chat(account_dir, keys, chat_id);
 }
 
-pub fn resolve_pending_for_chat(
-    account_dir: &str,
-    keys: &HashMap<String, String>,
-    chat_id: &str,
-) {
+pub fn resolve_pending_for_chat(account_dir: &str, keys: &HashMap<String, String>, chat_id: &str) {
     let messages = wechat_messages::list_messages(account_dir, keys, chat_id, 20, 0);
     let mut reg = REGISTRY.lock().expect("client_msg_registry lock");
 
@@ -63,10 +59,15 @@ pub fn resolve_pending_for_chat(
         .pending
         .iter()
         .filter(|(_, p)| p.chat_id == chat_id)
-        .map(|(id, p)| (id.clone(), PendingSend {
-            chat_id: p.chat_id.clone(),
-            text: p.text.clone(),
-        }))
+        .map(|(id, p)| {
+            (
+                id.clone(),
+                PendingSend {
+                    chat_id: p.chat_id.clone(),
+                    text: p.text.clone(),
+                },
+            )
+        })
         .collect();
 
     for (client_msg_id, pending) in pending_snapshot {
@@ -94,18 +95,14 @@ pub fn resolve_pending_for_chat(
     }
 
     if !resolved_ids.is_empty() {
-        reg.pending
-            .retain(|(id, _)| !resolved_ids.contains(id));
+        reg.pending.retain(|(id, _)| !resolved_ids.contains(id));
     }
 }
 
 pub fn attach_client_msg_ids(chat_id: &str, messages: &mut [Message]) {
     let reg = REGISTRY.lock().expect("client_msg_registry lock");
     for m in messages {
-        if let Some(client_msg_id) = reg
-            .resolved
-            .get(&(chat_id.to_string(), m.local_id))
-        {
+        if let Some(client_msg_id) = reg.resolved.get(&(chat_id.to_string(), m.local_id)) {
             m.client_msg_id = Some(client_msg_id.clone());
         }
     }
@@ -156,14 +153,10 @@ mod tests {
         fresh_registry();
         {
             let mut reg = REGISTRY.lock().expect("client_msg_registry lock");
-            reg.resolved.insert(
-                ("chat-a".to_string(), 10),
-                "client-a".to_string(),
-            );
-            reg.resolved.insert(
-                ("chat-a".to_string(), 11),
-                "client-b".to_string(),
-            );
+            reg.resolved
+                .insert(("chat-a".to_string(), 10), "client-a".to_string());
+            reg.resolved
+                .insert(("chat-a".to_string(), 11), "client-b".to_string());
         }
 
         let mut messages = vec![

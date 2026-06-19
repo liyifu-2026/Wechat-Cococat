@@ -1,5 +1,9 @@
 use rusqlite::{params, Connection};
 
+fn log_db_write_error(op: &str, err: rusqlite::Error) {
+    tracing::error!("[db] {op} failed: {err}");
+}
+
 // ============================================
 // SYNC STATE QUERIES
 // ============================================
@@ -26,15 +30,16 @@ pub fn get_sync_state(conn: &Connection, key: &str, session_id: Option<&str>) ->
 
 pub fn set_sync_state(conn: &Connection, key: &str, value: &str, session_id: Option<&str>) {
     let now = chrono::Utc::now().to_rfc3339();
-    conn.execute(
+    if let Err(err) = conn.execute(
         "INSERT INTO sync_state (session_id, key, value, updated_at)
          VALUES (?1, ?2, ?3, ?4)
          ON CONFLICT(session_id, key) DO UPDATE SET
            value = excluded.value,
            updated_at = excluded.updated_at",
         params![session_id, key, value, now],
-    )
-    .ok();
+    ) {
+        log_db_write_error("set_sync_state", err);
+    }
 }
 
 // ============================================
@@ -57,23 +62,30 @@ pub fn update_session_logged_in_user(
     logged_in_user: Option<&str>,
 ) {
     let now = chrono::Utc::now().to_rfc3339();
-    let login_state = if logged_in_user.is_some() { "logged_in" } else { "logged_out" };
-    conn.execute(
+    let login_state = if logged_in_user.is_some() {
+        "logged_in"
+    } else {
+        "logged_out"
+    };
+    if let Err(err) = conn.execute(
         "UPDATE sessions SET logged_in_user = ?1, login_state = ?2, updated_at = ?3 WHERE id = ?4",
         params![logged_in_user, login_state, now, session_id],
-    )
-    .ok();
+    ) {
+        log_db_write_error("update_session_logged_in_user", err);
+    }
 }
 
 pub fn clear_session_data(conn: &Connection, session_id: &str) {
-    conn.execute(
+    if let Err(err) = conn.execute(
         "DELETE FROM wechat_keys WHERE session_id = ?1",
         params![session_id],
-    )
-    .ok();
-    conn.execute(
+    ) {
+        log_db_write_error("clear_session_data.wechat_keys", err);
+    }
+    if let Err(err) = conn.execute(
         "DELETE FROM sync_state WHERE session_id = ?1",
         params![session_id],
-    )
-    .ok();
+    ) {
+        log_db_write_error("clear_session_data.sync_state", err);
+    }
 }

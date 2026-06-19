@@ -12,16 +12,39 @@ use crate::tools::wechat_keys::{
 
 static EVENT_TX: std::sync::OnceLock<broadcast::Sender<String>> = std::sync::OnceLock::new();
 const CHANNEL_CAPACITY: usize = 1024;
+const DEFAULT_EVENT_POLL_MS: u64 = 200;
+const MIN_EVENT_POLL_MS: u64 = 50;
+const MAX_EVENT_POLL_MS: u64 = 2_000;
 
 pub fn init_event_broadcast() {
-    let (tx, _) = broadcast::channel(CHANNEL_CAPACITY);
-    EVENT_TX.set(tx).ok();
+    let _ = get_sender();
 }
 
 pub fn get_sender() -> &'static broadcast::Sender<String> {
-    EVENT_TX
-        .get()
-        .expect("Event broadcast not initialized; call init_event_broadcast first")
+    EVENT_TX.get_or_init(|| {
+        let (tx, _) = broadcast::channel(CHANNEL_CAPACITY);
+        tx
+    })
+}
+
+fn event_poll_interval() -> std::time::Duration {
+    let ms = std::env::var("COCOCAT_DRIVER_EVENT_POLL_MS")
+        .or_else(|_| std::env::var("DRIVER_EVENT_POLL_MS"))
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(DEFAULT_EVENT_POLL_MS)
+        .clamp(MIN_EVENT_POLL_MS, MAX_EVENT_POLL_MS);
+    std::time::Duration::from_millis(ms)
+}
+
+pub fn emit_chat_changed(chat_id: &str) {
+    let payload = serde_json::json!({
+        "type": "new_messages",
+        "chats": [{ "chatId": chat_id }],
+        "timestamp": chrono::Utc::now().to_rfc3339(),
+        "source": "send",
+    });
+    let _ = get_sender().send(payload.to_string());
 }
 
 pub fn spawn_event_monitor() {
@@ -30,7 +53,7 @@ pub fn spawn_event_monitor() {
         let mut prev_state: HashMap<String, Option<i64>> = HashMap::new();
 
         loop {
-            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            tokio::time::sleep(event_poll_interval()).await;
 
             let session = match get_session("default") {
                 Some(s) if s.status == "running" => s,
@@ -102,7 +125,11 @@ pub fn spawn_event_monitor() {
 
             prev_state = current;
             if !changed.is_empty() {
-                tracing::info!("[events] Poll: {} chats, {} changed", chats.len(), changed.len());
+                tracing::info!(
+                    "[events] Poll: {} chats, {} changed",
+                    chats.len(),
+                    changed.len()
+                );
 
                 let payload = serde_json::json!({
                     "type": "new_messages",

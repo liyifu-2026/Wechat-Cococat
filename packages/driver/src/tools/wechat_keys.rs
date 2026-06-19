@@ -59,21 +59,26 @@ pub fn get_stored_keys(
     session_id: &str,
     account_dir: &str,
 ) -> HashMap<String, String> {
-    let mut stmt = conn
-        .prepare(
-            "SELECT db_name, hex_key FROM wechat_keys
-             WHERE session_id = ?1 AND account_dir = ?2",
-        )
-        .unwrap();
+    let mut stmt = match conn.prepare(
+        "SELECT db_name, hex_key FROM wechat_keys
+         WHERE session_id = ?1 AND account_dir = ?2",
+    ) {
+        Ok(stmt) => stmt,
+        Err(e) => {
+            tracing::error!("[wechat-keys] failed to prepare key query: {e}");
+            return HashMap::new();
+        }
+    };
 
-    let rows = stmt
-        .query_map(params![session_id, account_dir], |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, String>(1)?,
-            ))
-        })
-        .unwrap();
+    let rows = match stmt.query_map(params![session_id, account_dir], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+    }) {
+        Ok(rows) => rows,
+        Err(e) => {
+            tracing::error!("[wechat-keys] failed to query stored keys: {e}");
+            return HashMap::new();
+        }
+    };
 
     let mut map = HashMap::new();
     for row in rows.flatten() {
@@ -87,7 +92,16 @@ fn add_key_aliases(account_dir: &str, keys: &mut HashMap<String, String>) {
     let aliases: &[(&str, &[&str])] = &[
         ("session", &["session.db"]),
         ("contact", &["contact.db", "contact_fts.db"]),
-        ("message", &["message_0.db", "message_fts.db", "message_resource.db", "biz_message_0.db", "media_0.db"]),
+        (
+            "message",
+            &[
+                "message_0.db",
+                "message_fts.db",
+                "message_resource.db",
+                "biz_message_0.db",
+                "media_0.db",
+            ],
+        ),
         ("emoticon", &["emoticon.db"]),
         ("head_image", &["head_image.db"]),
         ("hardlink", &["hardlink.db"]),
@@ -100,7 +114,8 @@ fn add_key_aliases(account_dir: &str, keys: &mut HashMap<String, String>) {
     for (category, db_names) in aliases {
         if let Some(key) = keys.get(*category).cloned() {
             for db_name in *db_names {
-                keys.entry((*db_name).to_string()).or_insert_with(|| key.clone());
+                keys.entry((*db_name).to_string())
+                    .or_insert_with(|| key.clone());
             }
         }
     }
@@ -132,12 +147,7 @@ pub fn is_db_skipped(keys: &HashMap<String, String>, db_name: &str) -> bool {
     keys.contains_key(&skipped_db_key(db_name))
 }
 
-pub fn mark_db_skipped(
-    conn: &Connection,
-    session_id: &str,
-    account_dir: &str,
-    db_name: &str,
-) {
+pub fn mark_db_skipped(conn: &Connection, session_id: &str, account_dir: &str, db_name: &str) {
     let mut keys = HashMap::new();
     keys.insert(skipped_db_key(db_name), "1".to_string());
     store_keys(conn, session_id, account_dir, &keys);
@@ -248,11 +258,7 @@ pub fn verify_key(db_path: &str, hex_key: &str) -> bool {
 /// 1. Check that all required DB keys exist in stored_keys
 /// 2. Scan disk for additional required DBs (message_N, media_N) without keys
 /// 3. Spot-check one key for validity
-pub fn needs_key_extraction(
-    conn: &Connection,
-    session_id: &str,
-    account_dir: &str,
-) -> bool {
+pub fn needs_key_extraction(conn: &Connection, session_id: &str, account_dir: &str) -> bool {
     let stored_keys = get_stored_keys(conn, session_id, account_dir);
 
     if stored_keys.is_empty() {
@@ -313,14 +319,21 @@ pub fn needs_key_extraction(
     if !missing_on_disk.is_empty() {
         tracing::info!(
             "[wechat-keys] Missing keys for on-disk DBs: {}",
-            missing_on_disk.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", ")
+            missing_on_disk
+                .iter()
+                .map(|s| s.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
         );
         return true;
     }
 
     // Spot-check one key
     let check_db = "session.db";
-    if let Some(check_key) = stored_keys.get(check_db).or_else(|| stored_keys.get("session")) {
+    if let Some(check_key) = stored_keys
+        .get(check_db)
+        .or_else(|| stored_keys.get("session"))
+    {
         let check_path = get_db_path(account_dir, check_db);
         if !verify_key(&check_path, check_key) {
             tracing::info!("[wechat-keys] Spot-check failed for {check_db}, re-extraction needed");

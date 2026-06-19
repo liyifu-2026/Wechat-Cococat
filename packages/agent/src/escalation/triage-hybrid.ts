@@ -121,7 +121,7 @@ export async function triageCustomerGate(
   }
 
   return finalizeOutcome(
-    { gate: "continue", reason: "llm_failed", confidence: 0.5, source: "fallback" },
+    { gate: "continue", reason: "llm_failed", confidence: 0, source: "fallback" },
     chatState,
     config,
   );

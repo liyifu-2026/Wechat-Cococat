@@ -457,7 +457,8 @@ html:not(.dark) .wechat-shell {
   color: var(--wx-text) !important;
   background-color: var(--wx-search-input) !important;
   border-color: var(--wx-border) !important;
-  color-scheme: light dark;
+  color-scheme: light;
+  accent-color: var(--wx-accent);
 }
 
 .wechat-settings-dialog select option,
@@ -465,6 +466,13 @@ html:not(.dark) .wechat-shell {
 .wx-themed-select option {
   color: var(--wx-text) !important;
   background-color: var(--wx-header-bg) !important;
+}
+
+.wechat-settings-dialog select option:checked,
+.wechat-settings-panel select option:checked,
+.wx-themed-select option:checked {
+  color: var(--wx-text) !important;
+  background-color: var(--wx-list-active) !important;
 }
 
 .dark .wechat-settings-dialog select,
@@ -483,6 +491,8 @@ html:not(.dark) .wechat-shell {
 
 html.dark .wechat-settings-panel select,
 html.dark .wechat-settings-scroll select,
+html.dark .wechat-settings-dialog select,
+html.dark .wechat-settings-scroll .wx-themed-select,
 html.dark .wechat-settings-panel .wx-themed-select {
   color-scheme: dark;
 }

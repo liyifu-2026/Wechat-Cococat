@@ -22,7 +22,11 @@ function load(chatId: string): WikiHitsFile {
       ? parsed.hits.filter((h) => typeof h === "string" && h.trim())
       : [];
     return { hits };
-  } catch {
+  } catch (err) {
+    console.warn(
+      `[pi-wechat] failed to load wiki hits for ${chatId}:`,
+      err instanceof Error ? err.message : err,
+    );
     return { hits: [] };
   }
 }

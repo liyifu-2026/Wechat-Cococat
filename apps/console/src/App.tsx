@@ -88,12 +88,12 @@ function App() {
           try {
             const proj = await openProject(lastProject.path)
             await openWikiProject(proj, { source: "welcome" })
-          } catch {
-            // Last project no longer valid
+          } catch (err) {
+            console.warn("Last project no longer valid:", err)
           }
         }
-      } catch {
-        // ignore init errors
+      } catch (err) {
+        console.error("App init failed:", err)
       } finally {
         setLoading(false)
       }

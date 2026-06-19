@@ -18,9 +18,11 @@ fn row_to_session(row: &rusqlite::Row) -> rusqlite::Result<Session> {
         xvfb_pid: row.get("xvfb_pid")?,
         dbus_pid: row.get("dbus_pid")?,
         error_message: row.get("error_message")?,
-        created_at: row.get::<_, Option<String>>("created_at")?
+        created_at: row
+            .get::<_, Option<String>>("created_at")?
             .unwrap_or_default(),
-        updated_at: row.get::<_, Option<String>>("updated_at")?
+        updated_at: row
+            .get::<_, Option<String>>("updated_at")?
             .unwrap_or_default(),
     })
 }
@@ -39,10 +41,20 @@ pub fn get_session(id_or_name: &str) -> Option<Session> {
 /// List all sessions.
 pub fn list_sessions() -> Vec<Session> {
     let db = get_db();
-    let mut stmt = db
-        .prepare("SELECT * FROM sessions ORDER BY created_at")
-        .unwrap();
-    let rows = stmt.query_map([], row_to_session).unwrap();
+    let mut stmt = match db.prepare("SELECT * FROM sessions ORDER BY created_at") {
+        Ok(stmt) => stmt,
+        Err(e) => {
+            tracing::error!("[sessions] failed to prepare list_sessions: {e}");
+            return Vec::new();
+        }
+    };
+    let rows = match stmt.query_map([], row_to_session) {
+        Ok(rows) => rows,
+        Err(e) => {
+            tracing::error!("[sessions] failed to query list_sessions: {e}");
+            return Vec::new();
+        }
+    };
     rows.flatten().collect()
 }
 
@@ -81,11 +93,7 @@ pub async fn create_session(name: &str) -> Result<Session, String> {
 
         // Get next VNC port
         let max_port: Option<i32> = db
-            .query_row(
-                "SELECT MAX(vnc_port) FROM sessions",
-                [],
-                |row| row.get(0),
-            )
+            .query_row("SELECT MAX(vnc_port) FROM sessions", [], |row| row.get(0))
             .ok();
         let vnc_port = max_port.unwrap_or(5900) + 1;
 
@@ -141,8 +149,8 @@ pub async fn get_or_create_default_session() -> Result<Session, String> {
 
 /// Start a session (launches Xvfb, D-Bus, AT-SPI, WeChat).
 pub async fn start_session(id_or_name: &str) -> Result<Session, String> {
-    let session = get_session(id_or_name)
-        .ok_or_else(|| format!("Session not found: {id_or_name}"))?;
+    let session =
+        get_session(id_or_name).ok_or_else(|| format!("Session not found: {id_or_name}"))?;
 
     if session.status == "running" {
         return Ok(session);
@@ -173,7 +181,13 @@ pub async fn start_session(id_or_name: &str) -> Result<Session, String> {
 
     // 2. D-Bus
     let dbus_output = std::process::Command::new("su")
-        .args(["-s", "/bin/bash", "-c", "dbus-launch --sh-syntax", linux_user.as_str()])
+        .args([
+            "-s",
+            "/bin/bash",
+            "-c",
+            "dbus-launch --sh-syntax",
+            linux_user.as_str(),
+        ])
         .output();
 
     let dbus_address = dbus_output
@@ -205,9 +219,24 @@ pub async fn start_session(id_or_name: &str) -> Result<Session, String> {
     let vnc_port = session.vnc_port.to_string();
     let _ = std::process::Command::new("x11vnc")
         .args([
-            "-display", display.as_str(), "-forever", "-nopw", "-shared", "-xkb",
-            "-rfbport", &vnc_port, "-threads", "-noxdamage", "-noxfixes", "-noscr",
-            "-noxrecord", "-nowf", "-defer", "10", "-wait", "40",
+            "-display",
+            display.as_str(),
+            "-forever",
+            "-nopw",
+            "-shared",
+            "-xkb",
+            "-rfbport",
+            &vnc_port,
+            "-threads",
+            "-noxdamage",
+            "-noxfixes",
+            "-noscr",
+            "-noxrecord",
+            "-nowf",
+            "-defer",
+            "10",
+            "-wait",
+            "40",
         ])
         .spawn();
 
@@ -222,13 +251,23 @@ pub async fn start_session(id_or_name: &str) -> Result<Session, String> {
     }
 
     // 6. WeChat
-    let _ = std::process::Command::new("su")
+    if let Err(e) = std::process::Command::new("su")
         .args(["-s", "/bin/bash", "-c",
             &format!(
                 "DISPLAY={display} DBUS_SESSION_BUS_ADDRESS={dbus_address} QT_ACCESSIBILITY=1 QT_LINUX_ACCESSIBILITY_ALWAYS_ON=1 GTK_MODULES=gail:atk-bridge HOME={home_dir} /usr/bin/wechat &"
             ),
             linux_user.as_str()])
-        .spawn();
+        .spawn()
+    {
+        let db = get_db();
+        let now = chrono::Utc::now().to_rfc3339();
+        let message = format!("Failed to spawn WeChat: {e}");
+        let _ = db.execute(
+            "UPDATE sessions SET status = 'error', error_message = ?1, updated_at = ?2 WHERE id = ?3",
+            params![message, now, session.id],
+        );
+        return Err(format!("Failed to spawn WeChat: {e}"));
+    }
 
     // Update status to 'running' — scoped so MutexGuard drops
     {
@@ -241,13 +280,13 @@ pub async fn start_session(id_or_name: &str) -> Result<Session, String> {
         .ok();
     }
 
-    Ok(get_session(&session.id).unwrap())
+    get_session(&session.id).ok_or_else(|| "Failed to read started session".to_string())
 }
 
 /// Stop a session.
 pub async fn stop_session(id_or_name: &str) -> Result<Session, String> {
-    let session = get_session(id_or_name)
-        .ok_or_else(|| format!("Session not found: {id_or_name}"))?;
+    let session =
+        get_session(id_or_name).ok_or_else(|| format!("Session not found: {id_or_name}"))?;
 
     if session.status == "stopped" {
         return Ok(session);
@@ -267,19 +306,21 @@ pub async fn stop_session(id_or_name: &str) -> Result<Session, String> {
     {
         let db = get_db();
         let now = chrono::Utc::now().to_rfc3339();
-        db.execute(
+        if let Err(err) = db.execute(
             "UPDATE sessions SET status = 'stopped', dbus_address = NULL, xvfb_pid = NULL, wechat_pid = NULL, dbus_pid = NULL, updated_at = ?1 WHERE id = ?2",
             params![now, session.id],
-        ).ok();
+        ) {
+            tracing::error!("[sessions] failed to mark session {} stopped: {}", session.id, err);
+        }
     }
 
-    Ok(get_session(&session.id).unwrap())
+    get_session(&session.id).ok_or_else(|| "Failed to read stopped session".to_string())
 }
 
 /// Delete a session.
 pub async fn delete_session(id_or_name: &str) -> Result<(), String> {
-    let session = get_session(id_or_name)
-        .ok_or_else(|| format!("Session not found: {id_or_name}"))?;
+    let session =
+        get_session(id_or_name).ok_or_else(|| format!("Session not found: {id_or_name}"))?;
 
     if session.status == "running" || session.status == "starting" {
         stop_session(&session.id).await?;
@@ -287,10 +328,43 @@ pub async fn delete_session(id_or_name: &str) -> Result<(), String> {
 
     {
         let db = get_db();
-        db.execute("DELETE FROM sync_state WHERE session_id = ?1", params![session.id]).ok();
-        db.execute("DELETE FROM wechat_keys WHERE session_id = ?1", params![session.id]).ok();
-        db.execute("DELETE FROM context WHERE session_id = ?1", params![session.id]).ok();
-        db.execute("DELETE FROM sessions WHERE id = ?1", params![session.id]).ok();
+        if let Err(err) = db.execute(
+            "DELETE FROM sync_state WHERE session_id = ?1",
+            params![session.id],
+        ) {
+            tracing::error!(
+                "[sessions] failed to delete sync_state for {}: {}",
+                session.id,
+                err
+            );
+        }
+        if let Err(err) = db.execute(
+            "DELETE FROM wechat_keys WHERE session_id = ?1",
+            params![session.id],
+        ) {
+            tracing::error!(
+                "[sessions] failed to delete wechat_keys for {}: {}",
+                session.id,
+                err
+            );
+        }
+        if let Err(err) = db.execute(
+            "DELETE FROM context WHERE session_id = ?1",
+            params![session.id],
+        ) {
+            tracing::error!(
+                "[sessions] failed to delete context for {}: {}",
+                session.id,
+                err
+            );
+        }
+        if let Err(err) = db.execute("DELETE FROM sessions WHERE id = ?1", params![session.id]) {
+            tracing::error!(
+                "[sessions] failed to delete session {}: {}",
+                session.id,
+                err
+            );
+        }
     }
 
     let _ = std::process::Command::new("userdel")

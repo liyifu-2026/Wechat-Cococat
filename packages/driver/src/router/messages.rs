@@ -12,10 +12,11 @@ use crate::execution::run_execution_loop;
 use crate::execution::sys_impl::production_impls;
 use crate::ia::types::{MediaResult, Message, SendResult, SubscriptionEvent};
 use crate::plans::send_message::{SendMessageParams, SendMessagePlan};
-use crate::tools::wechat_media::get_message_media;
-use crate::tools::wechat_artifacts::write_artifact;
-use crate::tools::wechat_messages;
+use crate::plans::Plan;
 use crate::tools::client_msg_registry;
+use crate::tools::wechat_artifacts::write_artifact;
+use crate::tools::wechat_media::get_message_media;
+use crate::tools::wechat_messages;
 
 #[derive(Deserialize)]
 pub struct ListParams {
@@ -47,11 +48,12 @@ pub async fn list_messages(
         _ => return Json(Vec::new()),
     };
 
-    if !ctx
-        .keys
-        .keys()
-        .any(|k| k.starts_with("message_") && k.ends_with(".db") && !k.contains("fts") && !k.contains("resource"))
-    {
+    if !ctx.keys.keys().any(|k| {
+        k.starts_with("message_")
+            && k.ends_with(".db")
+            && !k.contains("fts")
+            && !k.contains("resource")
+    }) {
         return Json(Vec::new());
     }
 
@@ -99,11 +101,12 @@ pub async fn list_messages_around(
         _ => return Json(Vec::new()),
     };
 
-    if !ctx
-        .keys
-        .keys()
-        .any(|k| k.starts_with("message_") && k.ends_with(".db") && !k.contains("fts") && !k.contains("resource"))
-    {
+    if !ctx.keys.keys().any(|k| {
+        k.starts_with("message_")
+            && k.ends_with(".db")
+            && !k.contains("fts")
+            && !k.contains("resource")
+    }) {
         return Json(Vec::new());
     }
 
@@ -187,9 +190,7 @@ pub async fn send_message(Json(input): Json<SendParams>) -> Json<SendResult> {
     {
         return Json(SendResult {
             success: false,
-            error: Some(
-                "WeChat rate limit cooldown active — try again later".to_string(),
-            ),
+            error: Some("WeChat rate limit cooldown active — try again later".to_string()),
         });
     }
 
@@ -294,13 +295,36 @@ pub async fn send_message(Json(input): Json<SendParams>) -> Json<SendResult> {
         image_mime,
         file_path: file_path.clone(),
         mentions: input.mentions,
+        session: Some(ctx.session.clone()),
     };
     let cancel = CancellationToken::new();
+    let cancel_for_timeout = cancel.clone();
     let noop_emit = |_: SubscriptionEvent| {};
     let (observer, executor) = production_impls(&ctx.session);
 
+    let execution = run_execution_loop(
+        &plan,
+        &params,
+        &mut context,
+        &observer,
+        &executor,
+        &noop_emit,
+        cancel,
+    );
     let (result, _plan_state) =
-        run_execution_loop(&plan, &params, &mut context, &observer, &executor, &noop_emit, cancel).await;
+        match tokio::time::timeout(std::time::Duration::from_secs(55), execution).await {
+            Ok(outcome) => outcome,
+            Err(_) => {
+                cancel_for_timeout.cancel();
+                (
+                    crate::execution::ExecutionResult {
+                        success: false,
+                        error: Some("sendMessage timed out after 55s".to_string()),
+                    },
+                    plan.initial_plan_state(),
+                )
+            }
+        };
 
     if let Some(p) = &image_path {
         let _ = std::fs::remove_file(p);
@@ -321,6 +345,7 @@ pub async fn send_message(Json(input): Json<SendParams>) -> Json<SendResult> {
                 );
             }
         }
+        crate::events::emit_chat_changed(&chat_id);
     }
 
     Json(SendResult {

@@ -73,3 +73,4 @@ AGENTS.md
 # Internal docs (llm_wiki, not shipped)
 llm_wiki/docs/
 llm_wiki/tests/
+.codex/worktrees/

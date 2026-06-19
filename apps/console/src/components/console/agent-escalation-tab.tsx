@@ -2,8 +2,6 @@ import { useCallback, useEffect, useState } from "react"
 import { RefreshCw, Save } from "lucide-react"
 import { useTranslation } from "react-i18next"
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
 import {
   readConfigFile,
   writeConfigFile,
@@ -13,7 +11,6 @@ import {
   parseEscalationConfig,
   serializeEscalationConfig,
   type EscalationConfigFile,
-  type EscalationWikiLink,
 } from "@/lib/escalation-config"
 import { inferLlmStack, persistLlmStack } from "@/lib/llm-stack-persist"
 import { useWikiStore } from "@/stores/wiki-store"
@@ -120,30 +117,6 @@ export function AgentEscalationTab() {
     }
   }
 
-  function updateWikiLink(index: number, patch: Partial<EscalationWikiLink>) {
-    setConfig((prev) => {
-      const links = [...(prev.wikiLinks ?? [])]
-      const row = links[index]
-      if (!row) return prev
-      links[index] = { ...row, ...patch }
-      return { ...prev, wikiLinks: links }
-    })
-  }
-
-  function addWikiLink() {
-    setConfig((prev) => ({
-      ...prev,
-      wikiLinks: [...(prev.wikiLinks ?? []), { path: "", note: "" }],
-    }))
-  }
-
-  function removeWikiLink(index: number) {
-    setConfig((prev) => ({
-      ...prev,
-      wikiLinks: (prev.wikiLinks ?? []).filter((_, i) => i !== index),
-    }))
-  }
-
   return (
     <div className="px-6 py-4 pb-8">
       <div className="mb-4 flex items-center justify-between gap-3">
@@ -240,70 +213,6 @@ export function AgentEscalationTab() {
               {t(`console.agent.escalation.${labelKey}`)}
             </label>
           ))}
-        </div>
-
-        <div className={`${CONSOLE_PANEL} space-y-3`}>
-          <div className="flex items-center justify-between gap-2">
-            <div>
-              <h2 className="font-medium">
-                {t("console.agent.escalation.wikiLinksTitle")}
-              </h2>
-              <p className="text-xs text-muted-foreground">
-                {t("console.agent.escalation.wikiLinksHint")}
-              </p>
-            </div>
-            <Button type="button" size="sm" variant="outline" onClick={addWikiLink}>
-              {t("console.agent.escalation.wikiLinksAdd")}
-            </Button>
-          </div>
-          {(config.wikiLinks ?? []).length === 0 ? (
-            <p className="text-sm text-muted-foreground">
-              {t("console.agent.escalation.wikiLinksEmpty")}
-            </p>
-          ) : (
-            <ul className="space-y-3">
-              {(config.wikiLinks ?? []).map((link, index) => (
-                <li
-                  key={`${index}-${link.path}`}
-                  className="grid gap-2 rounded-md border p-3 sm:grid-cols-[1fr_1fr_auto]"
-                >
-                  <div>
-                    <Label className="text-xs">
-                      {t("console.agent.escalation.wikiLinksPath")}
-                    </Label>
-                    <Input
-                      value={link.path}
-                      onChange={(e) =>
-                        updateWikiLink(index, { path: e.target.value })
-                      }
-                      placeholder="faq/refund.md"
-                    />
-                  </div>
-                  <div>
-                    <Label className="text-xs">
-                      {t("console.agent.escalation.wikiLinksNote")}
-                    </Label>
-                    <Input
-                      value={link.note}
-                      onChange={(e) =>
-                        updateWikiLink(index, { note: e.target.value })
-                      }
-                    />
-                  </div>
-                  <div className="flex items-end">
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="ghost"
-                      onClick={() => removeWikiLink(index)}
-                    >
-                      {t("console.agent.escalation.wikiLinksRemove")}
-                    </Button>
-                  </div>
-                </li>
-              ))}
-            </ul>
-          )}
         </div>
 
         <Button className="w-fit" onClick={() => void saveConfig()} disabled={saving}>

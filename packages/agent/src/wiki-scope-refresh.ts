@@ -22,7 +22,11 @@ function normalizePath(path: string): string {
 function tryReadFile(path: string): string {
   try {
     return readFileSync(path, "utf8");
-  } catch {
+  } catch (err) {
+    console.warn(
+      `[wiki-scope-refresh] failed to read ${path}:`,
+      err instanceof Error ? err.message : err,
+    );
     return "";
   }
 }
@@ -37,8 +41,11 @@ function ensureProjectId(projectPath: string): string {
       if (typeof parsed.id === "string" && parsed.id.trim()) {
         return parsed.id.trim();
       }
-    } catch {
-      // fall through
+    } catch (err) {
+      console.warn(
+        `[wiki-scope-refresh] failed to parse ${identityPath}:`,
+        err instanceof Error ? err.message : err,
+      );
     }
   }
 
@@ -178,7 +185,11 @@ function readdirSafe(dir: string): string[] {
     return readdirSync(dir, { withFileTypes: true })
       .filter((entry) => entry.isDirectory())
       .map((entry) => entry.name);
-  } catch {
+  } catch (err) {
+    console.warn(
+      `[wiki-scope-refresh] failed to read directory ${dir}:`,
+      err instanceof Error ? err.message : err,
+    );
     return [];
   }
 }

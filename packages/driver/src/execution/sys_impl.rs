@@ -23,10 +23,7 @@ impl Observer for SysObserver {
     async fn observe(&self) -> Result<Observation, String> {
         let a11y = get_a11y_desktop(&self.options).await?;
         let screenshot = capture_screenshot(&self.options).await.unwrap_or_default();
-        Ok(Observation {
-            a11y,
-            screenshot,
-        })
+        Ok(Observation { a11y, screenshot })
     }
 }
 
@@ -70,7 +67,9 @@ impl Executor for SysExecutor {
             Action::ClickSelector { selector } => {
                 let node = query_selector(a11y, selector)
                     .ok_or_else(|| format!("selector '{selector}' no match"))?;
-                let bounds = node.bounds.as_ref()
+                let bounds = node
+                    .bounds
+                    .as_ref()
                     .ok_or_else(|| format!("selector '{selector}' matched but no bounds"))?;
                 let cx = (bounds.x + bounds.width / 2.0).round() as i32;
                 let cy = (bounds.y + bounds.height / 2.0).round() as i32;
@@ -117,7 +116,9 @@ impl Executor for SysExecutor {
                 Ok(())
             }
 
-            Action::Scroll { direction, amount, .. } => {
+            Action::Scroll {
+                direction, amount, ..
+            } => {
                 let dir = match direction {
                     ScrollDirection::Up => "up",
                     ScrollDirection::Down => "down",
@@ -139,9 +140,10 @@ impl Executor for SysExecutor {
                 Ok(())
             }
 
-            Action::Emit { .. } | Action::Sequence { .. } => {
-                Err("Emit and Sequence must be handled by the execution loop, not the Executor".to_string())
-            }
+            Action::Emit { .. } | Action::Sequence { .. } => Err(
+                "Emit and Sequence must be handled by the execution loop, not the Executor"
+                    .to_string(),
+            ),
         }
     }
 }
@@ -153,8 +155,5 @@ pub fn production_impls(session: &Session) -> (SysObserver, SysExecutor) {
         session: Some(session.clone()),
         timeout_ms: 60_000,
     };
-    (
-        SysObserver::new(options.clone()),
-        SysExecutor::new(options),
-    )
+    (SysObserver::new(options.clone()), SysExecutor::new(options))
 }

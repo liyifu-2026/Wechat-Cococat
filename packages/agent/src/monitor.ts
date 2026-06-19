@@ -77,9 +77,14 @@ export async function runWeChatMonitor(
 
   let stopped = false;
   let wsHandle: { close: () => void } | undefined;
+  let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
 
   const connect = () => {
     if (stopped) return;
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = undefined;
+    }
     wsHandle?.close();
     wsHandle = client.eventsSubscribe({
       onEvent: (event) => {
@@ -91,7 +96,7 @@ export async function runWeChatMonitor(
       onClose: () => {
         if (stopped) return;
         console.warn("[pi-wechat] events ws closed — reconnecting in 2s");
-        setTimeout(connect, 2000);
+        reconnectTimer = setTimeout(connect, 2000);
       },
     });
   };
@@ -115,6 +120,10 @@ export async function runWeChatMonitor(
   return {
     stop: () => {
       stopped = true;
+      if (reconnectTimer) {
+        clearTimeout(reconnectTimer);
+        reconnectTimer = undefined;
+      }
       wsHandle?.close();
       if (isQueueEnabled()) {
         void stopQueueWorkers();

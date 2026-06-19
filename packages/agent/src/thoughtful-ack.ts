@@ -34,8 +34,11 @@ function loadAckHistory(chatId: string): AckHistory {
         recent: raw.recent.filter((p): p is string => typeof p === "string"),
       };
     }
-  } catch {
-    // ignore
+  } catch (err) {
+    console.warn(
+      `[pi-wechat] failed to load thoughtful ack history for ${chatId}:`,
+      err instanceof Error ? err.message : err,
+    );
   }
   return { recent: [] };
 }

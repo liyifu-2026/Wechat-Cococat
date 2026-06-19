@@ -17,6 +17,7 @@ import {
 } from "@/lib/driver-types"
 import {
   mergeUniqueMessagesDesc,
+  messagesForChat,
   newestMessageUnix,
   oldestMessageUnix,
 } from "@/lib/inbox-message-window"
@@ -93,6 +94,7 @@ export function useDriverInbox(enabled = true) {
   const messagesExtendedRef = useRef(false)
   const viewModeRef = useRef<InboxMessageViewMode>("latest")
   const selectedChatIdRef = useRef<string | null>(null)
+  const loadSeqRef = useRef(0)
   const pendingByChatRef = useRef<Map<string, OptimisticPending[]>>(new Map())
   const reconcileTimersRef = useRef<Map<string, number[]>>(new Map())
 
@@ -139,7 +141,10 @@ export function useDriverInbox(enabled = true) {
   const revalidateLatestMessages = useCallback(
     async (chat: DriverChat) => {
       try {
-        const next = await fetchDriverMessages(chat.id, INITIAL_MESSAGE_LIMIT, 0)
+        const next = messagesForChat(
+          chat.id,
+          await fetchDriverMessages(chat.id, INITIAL_MESSAGE_LIMIT, 0),
+        )
         if (selectedChatIdRef.current !== chat.id) return
         const applied = applyMessagesWithOptimistic(chat.id, next)
         const hasMore = next.length >= INITIAL_MESSAGE_LIMIT
@@ -160,14 +165,14 @@ export function useDriverInbox(enabled = true) {
   const refreshMessagesInner = useCallback(
     async (chatId: string) => {
       try {
-        const latest = await fetchDriverMessages(
+        const latest = messagesForChat(
           chatId,
-          INITIAL_MESSAGE_LIMIT,
-          0,
+          await fetchDriverMessages(chatId, INITIAL_MESSAGE_LIMIT, 0),
         )
+        if (selectedChatIdRef.current !== chatId) return
         setMessages((prev) => {
           const merged = mergeLatestMessages(
-            stripPendingMessages(prev),
+            messagesForChat(chatId, stripPendingMessages(prev)),
             latest,
             messagesExtendedRef.current,
           )
@@ -180,11 +185,49 @@ export function useDriverInbox(enabled = true) {
     [applyMessagesWithOptimistic],
   )
 
+  const refreshMessagesFast = useCallback(
+    async (chatId: string) => {
+      try {
+        const newest = newestMessageUnix(messages)
+        if (
+          newest == null ||
+          viewModeRef.current !== "latest" ||
+          messagesExtendedRef.current
+        ) {
+          await refreshMessagesInner(chatId)
+          return
+        }
+
+        const newer = messagesForChat(
+          chatId,
+          await fetchDriverMessagesAfter(
+            chatId,
+            Math.max(0, newest - 1),
+            LOAD_MORE_PAGE,
+          ),
+        )
+        if (selectedChatIdRef.current !== chatId || newer.length === 0) return
+
+        setMessages((prev) => {
+          const merged = mergeUniqueMessagesDesc(
+            newer,
+            messagesForChat(chatId, stripPendingMessages(prev)),
+            chatId,
+          )
+          return applyMessagesWithOptimistic(chatId, merged)
+        })
+      } catch {
+        await refreshMessagesInner(chatId)
+      }
+    },
+    [applyMessagesWithOptimistic, messages, refreshMessagesInner],
+  )
+
   const refreshMessages = useCallback(
     async (chatId: string) => {
-      await refreshMessagesInner(chatId)
+      await refreshMessagesFast(chatId)
     },
-    [refreshMessagesInner],
+    [refreshMessagesFast],
   )
 
   const scheduleSendReconcile = useCallback(
@@ -195,13 +238,13 @@ export function useDriverInbox(enabled = true) {
       const timers = SEND_RECONCILE_DELAYS_MS.map((delay) =>
         window.setTimeout(() => {
           if ((pendingByChatRef.current.get(chatId)?.length ?? 0) > 0) {
-            void refreshMessagesInner(chatId)
+            void refreshMessagesFast(chatId)
           }
         }, delay),
       )
       reconcileTimersRef.current.set(chatId, timers)
     },
-    [refreshMessagesInner],
+    [refreshMessagesFast],
   )
 
   const appendOptimisticSend = useCallback(
@@ -242,9 +285,9 @@ export function useDriverInbox(enabled = true) {
   const onMessageSent = useCallback(
     (chatId: string) => {
       scheduleSendReconcile(chatId)
-      void refreshMessagesInner(chatId)
+      void refreshMessagesFast(chatId)
     },
-    [refreshMessagesInner, scheduleSendReconcile],
+    [refreshMessagesFast, scheduleSendReconcile],
   )
 
   const refreshChatsBusy = useRef(false)
@@ -327,6 +370,9 @@ export function useDriverInbox(enabled = true) {
 
   const loadMessages = useCallback(
     async (chat: DriverChat, opts?: { force?: boolean }) => {
+      const seq = loadSeqRef.current + 1
+      loadSeqRef.current = seq
+      selectedChatIdRef.current = chat.id
       setSelectedChat(chat)
       setMessageQuery("")
       setScrollRestoreTop(null)
@@ -339,7 +385,7 @@ export function useDriverInbox(enabled = true) {
         viewModeRef.current = memory.viewMode
         setMessageViewMode(memory.viewMode)
         messagesExtendedRef.current = memory.messagesExtended
-        setMessages(memory.messages)
+        setMessages(messagesForChat(chat.id, memory.messages))
         setHasMoreOlder(memory.hasMoreOlder)
         setHasMoreNewer(memory.hasMoreNewer)
         setMessagesLoading(false)
@@ -351,7 +397,12 @@ export function useDriverInbox(enabled = true) {
       const cached = !opts?.force ? inboxMessageSliceCache.get(chat.id) : undefined
       if (cached) {
         resetLatestView()
-        setMessages(applyMessagesWithOptimistic(chat.id, cached.messages))
+        setMessages(
+          applyMessagesWithOptimistic(
+            chat.id,
+            messagesForChat(chat.id, cached.messages),
+          ),
+        )
         setHasMoreOlder(cached.hasMoreOlder)
         setMessagesLoading(false)
         setError(null)
@@ -364,7 +415,13 @@ export function useDriverInbox(enabled = true) {
       setMessagesLoading(true)
       setError(null)
       try {
-        const next = await fetchDriverMessages(chat.id, INITIAL_MESSAGE_LIMIT, 0)
+        const next = messagesForChat(
+          chat.id,
+          await fetchDriverMessages(chat.id, INITIAL_MESSAGE_LIMIT, 0),
+        )
+        if (seq !== loadSeqRef.current || selectedChatIdRef.current !== chat.id) {
+          return
+        }
         const applied = applyMessagesWithOptimistic(chat.id, next)
         const hasMore = next.length >= INITIAL_MESSAGE_LIMIT
         setMessages(applied)
@@ -385,6 +442,8 @@ export function useDriverInbox(enabled = true) {
   )
 
   const clearSelectedChat = useCallback(() => {
+    loadSeqRef.current += 1
+    selectedChatIdRef.current = null
     setSelectedChat(null)
     setMessages([])
     setMessagesLoading(false)
@@ -410,6 +469,7 @@ export function useDriverInbox(enabled = true) {
       inboxChatScrollStore.clear(chat.id)
       inboxMessageSliceCache.clear(chat.id)
       setSelectedChat(chat)
+      selectedChatIdRef.current = chat.id
       setMessageQuery("")
       setListQuery("")
       viewModeRef.current = "around"
@@ -420,11 +480,11 @@ export function useDriverInbox(enabled = true) {
       setMessagesLoading(true)
       setError(null)
       try {
-        const windowMsgs = await fetchDriverMessagesAround(
+        const windowMsgs = messagesForChat(
           chat.id,
-          localId,
-          INITIAL_MESSAGE_LIMIT,
+          await fetchDriverMessagesAround(chat.id, localId, INITIAL_MESSAGE_LIMIT),
         )
+        if (selectedChatIdRef.current !== chat.id) return
         if (windowMsgs.length === 0) {
           setPendingScrollLocalId(null)
           throw new Error(i18n.t("wechat.inbox.messageJumpNotFound"))
@@ -471,22 +531,24 @@ export function useDriverInbox(enabled = true) {
       if (viewModeRef.current === "around") {
         const before = oldestMessageUnix(messages)
         if (before == null) return false
-        const older = await fetchDriverMessagesBefore(
+        const older = messagesForChat(
           chat.id,
-          before,
-          LOAD_MORE_PAGE,
+          await fetchDriverMessagesBefore(chat.id, before, LOAD_MORE_PAGE),
         )
+        if (selectedChatIdRef.current !== chat.id) return false
         if (older.length < LOAD_MORE_PAGE) setHasMoreOlder(false)
         if (older.length === 0) return false
-        setMessages((prev) => mergeUniqueMessagesDesc(prev, older))
+        setMessages((prev) =>
+          mergeUniqueMessagesDesc(messagesForChat(chat.id, prev), older, chat.id),
+        )
         return true
       }
 
-      const older = await fetchDriverMessages(
+      const older = messagesForChat(
         chat.id,
-        LOAD_MORE_PAGE,
-        messages.length,
+        await fetchDriverMessages(chat.id, LOAD_MORE_PAGE, messages.length),
       )
+      if (selectedChatIdRef.current !== chat.id) return false
       if (older.length < LOAD_MORE_PAGE) setHasMoreOlder(false)
       if (older.length === 0) return false
 
@@ -494,7 +556,8 @@ export function useDriverInbox(enabled = true) {
       setMessages((prev) => {
         const ids = new Set(prev.map((m) => m.localId))
         const added = older.filter((m) => !ids.has(m.localId))
-        return added.length > 0 ? [...prev, ...added] : prev
+        const current = messagesForChat(chat.id, prev)
+        return added.length > 0 ? [...current, ...added] : current
       })
       return true
     } catch {
@@ -519,10 +582,16 @@ export function useDriverInbox(enabled = true) {
     try {
       const after = newestMessageUnix(messages)
       if (after == null) return false
-      const newer = await fetchDriverMessagesAfter(chat.id, after, LOAD_MORE_PAGE)
+      const newer = messagesForChat(
+        chat.id,
+        await fetchDriverMessagesAfter(chat.id, after, LOAD_MORE_PAGE),
+      )
+      if (selectedChatIdRef.current !== chat.id) return false
       if (newer.length < LOAD_MORE_PAGE) setHasMoreNewer(false)
       if (newer.length === 0) return false
-      setMessages((prev) => mergeUniqueMessagesDesc(newer, prev))
+      setMessages((prev) =>
+        mergeUniqueMessagesDesc(newer, messagesForChat(chat.id, prev), chat.id),
+      )
       return true
     } catch {
       return false

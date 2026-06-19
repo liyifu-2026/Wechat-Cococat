@@ -32,7 +32,11 @@ function truncate(text: string, max: number): string {
 function safeJson(value: unknown): string {
   try {
     return truncate(JSON.stringify(value), MAX_QUERY);
-  } catch {
+  } catch (err) {
+    console.warn(
+      "[pi-wechat] failed to serialize trace payload:",
+      err instanceof Error ? err.message : err,
+    );
     return truncate(String(value), MAX_QUERY);
   }
 }

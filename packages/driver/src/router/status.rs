@@ -9,8 +9,8 @@ use axum::{
 use serde::Deserialize;
 use tokio_util::sync::CancellationToken;
 
-use base64::Engine;
 use crate::context::create_context;
+use crate::context::session_ctx::{chats_ready_for_session, SessionCtx};
 use crate::db::get_db;
 use crate::execution::run_execution_loop;
 use crate::execution::sys_impl::production_impls;
@@ -18,12 +18,13 @@ use crate::ia::types::*;
 use crate::ia::{find_state_by_id, identify_states};
 use crate::plans::login::{LoginParams, LoginPlan};
 use crate::plans::logout::{LogoutParams, LogoutPlan};
-use crate::context::session_ctx::{chats_ready_for_session, SessionCtx};
 use crate::sessions::manager::get_session;
 use crate::tools::a11y::get_a11y_desktop;
 use crate::tools::exec::ExecOptions;
 use crate::tools::qr::{decode_qr_from_base64, to_data_url};
 use crate::tools::screenshot::capture_screenshot;
+use crate::tools::wechat_db::find_wechat_pid;
+use base64::Engine;
 
 pub async fn get_status() -> Json<serde_json::Value> {
     let login_state = get_session("default")
@@ -49,6 +50,16 @@ pub async fn session_auth_status() -> Json<serde_json::Value> {
         }
     };
 
+    // Cross-check cached login state against WeChat process liveness.
+    // If the DB says logged_in but the WeChat process isn't running,
+    // return logged_out immediately — the DB value is stale.
+    if session.login_state == "logged_in" && find_wechat_pid().is_none() {
+        return Json(serde_json::json!({
+            "status": "logged_out",
+            "chatsReady": false,
+        }));
+    }
+
     let (chats_ready, chats_ready_reason) = if session.login_state != "logged_in" {
         (false, None::<&str>)
     } else {
@@ -56,10 +67,7 @@ pub async fn session_auth_status() -> Json<serde_json::Value> {
         if !ready {
             tokio::spawn(async {
                 if let Ok(ctx) = SessionCtx::load().await {
-                    tracing::info!(
-                        "[session-auth] background key sync for {}",
-                        ctx.account_dir
-                    );
+                    tracing::info!("[session-auth] background key sync for {}", ctx.account_dir);
                 }
             });
         }
@@ -113,9 +121,7 @@ pub async fn auth_status() -> Json<serde_json::Value> {
         }
     };
 
-    let screenshot = capture_screenshot(&exec_options)
-        .await
-        .unwrap_or_default();
+    let screenshot = capture_screenshot(&exec_options).await.unwrap_or_default();
     let identified = identify_states(&a11y, &screenshot);
 
     // Load persisted state and apply reduce
@@ -224,7 +230,16 @@ pub async fn logout() -> Json<serde_json::Value> {
     let params = LogoutParams;
     let emit = |_event: SubscriptionEvent| {};
     let (observer, executor) = production_impls(&session);
-    let (result, _) = run_execution_loop(&plan, &params, &mut context, &observer, &executor, &emit, cancel).await;
+    let (result, _) = run_execution_loop(
+        &plan,
+        &params,
+        &mut context,
+        &observer,
+        &executor,
+        &emit,
+        cancel,
+    )
+    .await;
 
     if result.success {
         // Clear logged_in_user from session
@@ -324,7 +339,17 @@ async fn handle_login_ws(mut socket: WebSocket, params: LoginWsParams) {
         let emit = move |event: SubscriptionEvent| {
             let _ = tx.send(event);
         };
-        run_execution_loop(&plan, &login_params, &mut context, &observer, &executor, &emit, cancel_for_exec).await.0
+        run_execution_loop(
+            &plan,
+            &login_params,
+            &mut context,
+            &observer,
+            &executor,
+            &emit,
+            cancel_for_exec,
+        )
+        .await
+        .0
     });
 
     // Main loop: bridge events to WebSocket, handle timeout + disconnect
@@ -343,7 +368,7 @@ async fn handle_login_ws(mut socket: WebSocket, params: LoginWsParams) {
                         if is_terminal_login_event(&ws_event) {
                             sent_terminal = true;
                         }
-                        let msg = serde_json::to_string(&ws_event).unwrap();
+                        let msg = login_event_json(&ws_event);
                         if socket.send(Message::Text(msg.into())).await.is_err() {
                             cancel.cancel();
                             client_disconnected = true;
@@ -357,7 +382,7 @@ async fn handle_login_ws(mut socket: WebSocket, params: LoginWsParams) {
                 cancel.cancel();
                 server_timeout = true;
                 sent_terminal = true;
-                let msg = serde_json::to_string(&LoginSubscriptionEvent::LoginTimeout).unwrap();
+                let msg = login_event_json(&LoginSubscriptionEvent::LoginTimeout);
                 if socket.send(Message::Text(msg.into())).await.is_err() {
                     client_disconnected = true;
                 }
@@ -380,7 +405,9 @@ async fn handle_login_ws(mut socket: WebSocket, params: LoginWsParams) {
     let exec_result = exec_handle.await.ok();
     if !client_disconnected && !sent_terminal {
         let fallback = match exec_result {
-            Some(result) if result.success => LoginSubscriptionEvent::LoginSuccess { user_id: None },
+            Some(result) if result.success => {
+                LoginSubscriptionEvent::LoginSuccess { user_id: None }
+            }
             Some(result) => {
                 let message = result.error.unwrap_or_else(|| "Login failed".to_string());
                 if message.starts_with("Unknown state for")
@@ -396,7 +423,7 @@ async fn handle_login_ws(mut socket: WebSocket, params: LoginWsParams) {
                 message: "Login execution task failed".to_string(),
             },
         };
-        let msg = serde_json::to_string(&fallback).unwrap();
+        let msg = login_event_json(&fallback);
         let _ = socket.send(Message::Text(msg.into())).await;
     }
 }
@@ -408,6 +435,13 @@ fn is_terminal_login_event(event: &LoginSubscriptionEvent) -> bool {
             | LoginSubscriptionEvent::LoginTimeout
             | LoginSubscriptionEvent::Error { .. }
     )
+}
+
+fn login_event_json(event: &LoginSubscriptionEvent) -> String {
+    serde_json::to_string(event).unwrap_or_else(|err| {
+        tracing::error!("[status] failed to serialize login event: {err}");
+        r#"{"type":"error","message":"Failed to serialize login event"}"#.to_string()
+    })
 }
 
 /// Convert generic SubscriptionEvent (from plans) to typed LoginSubscriptionEvent (for WS).

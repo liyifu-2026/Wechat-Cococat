@@ -1,23 +1,32 @@
+import { resolveReplyCooldownMs } from "./effective-config.js";
+
 const lastReplyAt = new Map<string, number>();
 
-const DEFAULT_COOLDOWN_MS = 30_000;
+const MAX_REPLY_TRACKED_CHATS = 1_000;
+const REPLY_TRACK_TTL_MS = 24 * 60 * 60 * 1000;
+
+function sweepReplyMap(now = Date.now()): void {
+  for (const [chatId, ts] of lastReplyAt) {
+    if (now - ts > REPLY_TRACK_TTL_MS) {
+      lastReplyAt.delete(chatId);
+    }
+  }
+  while (lastReplyAt.size > MAX_REPLY_TRACKED_CHATS) {
+    const oldest = lastReplyAt.keys().next().value as string | undefined;
+    if (!oldest) break;
+    lastReplyAt.delete(oldest);
+  }
+}
 
 export function recordAutoReply(chatId: string): void {
+  sweepReplyMap();
   lastReplyAt.set(chatId, Date.now());
 }
 
 export function replyCooldownMs(
   styleCooldown: number | undefined,
 ): number {
-  if (styleCooldown !== undefined && styleCooldown >= 0) {
-    return styleCooldown;
-  }
-  const env = process.env.WECHAT_REPLY_COOLDOWN_MS?.trim();
-  if (env) {
-    const n = Number(env);
-    if (!Number.isNaN(n) && n >= 0) return n;
-  }
-  return DEFAULT_COOLDOWN_MS;
+  return resolveReplyCooldownMs({ styleCooldownMs: styleCooldown });
 }
 
 export function isReplyCoolingDown(
@@ -25,6 +34,7 @@ export function isReplyCoolingDown(
   cooldownMs: number,
 ): boolean {
   if (cooldownMs <= 0) return false;
+  sweepReplyMap();
   const last = lastReplyAt.get(chatId);
   if (last === undefined) return false;
   return Date.now() - last < cooldownMs;

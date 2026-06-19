@@ -1,4 +1,8 @@
 import {
+  modelSupportsRole,
+  resolveModelCapabilities,
+} from "@cococat/shared/model-capabilities";
+import {
   resolveRole,
   type LlmStackFile,
   type ProviderConfigs,
@@ -33,7 +37,10 @@ export function multimodalConfigFromWikiIngestRole(
   prev?: MultimodalConfig | null,
 ): MultimodalConfig {
   const binding = stack.roles.wikiIngestCaption;
-  const enabled = wikiIngestEnabled(binding);
+  const resolved = resolveRole(stack, "wikiIngestCaption");
+  const enabled =
+    wikiIngestEnabled(binding) &&
+    modelSupportsRole(resolveModelCapabilities(resolved.model), "wikiIngestCaption");
   const concurrency = clampConcurrency(
     stack.wikiIngestConcurrency ?? prev?.concurrency ?? 4,
   );
@@ -101,7 +108,6 @@ export function multimodalConfigFromWikiIngestRole(
     };
   }
 
-  const resolved = resolveRole(stack, "wikiIngestCaption");
   const cfg = resolveConfig(
     preset,
     {

@@ -8,10 +8,27 @@ export type CaptionInboxVoiceResult = {
   error?: string
 }
 
-async function captionViaTauri(audioDataUrl: string): Promise<string> {
-  const result = await invoke<CaptionInboxVoiceResult>("caption_inbox_voice", {
-    audioDataUrl,
+const VOICE_CAPTION_TIMEOUT_MS = 30_000
+
+function withCaptionTimeout<T>(work: () => Promise<T>): Promise<T> {
+  let timeoutId: ReturnType<typeof setTimeout> | undefined
+  const timeout = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(() => {
+      reject(new Error("CAPTION_TIMEOUT"))
+    }, VOICE_CAPTION_TIMEOUT_MS)
   })
+
+  return Promise.race([work(), timeout]).finally(() => {
+    if (timeoutId) clearTimeout(timeoutId)
+  })
+}
+
+async function captionViaTauri(audioDataUrl: string): Promise<string> {
+  const result = await withCaptionTimeout(() =>
+    invoke<CaptionInboxVoiceResult>("caption_inbox_voice", {
+      audioDataUrl,
+    }),
+  )
   const text = result.text?.trim()
   if (text) return text
   throw new Error(result.error ?? "CAPTION_EMPTY")

@@ -74,12 +74,14 @@ export const useInboxMuteStore = create<InboxMuteState>((set, get) => ({
     const { mutes, refreshMutes } = get()
     if (mutes.length === 0) return 0
     set({ batchBusy: true })
-    let count = 0
     try {
-      for (const m of mutes) {
-        const changed = await unmuteEscalationChat(m.chat_id)
-        if (changed) count += 1
-      }
+      const results = await Promise.allSettled(
+        mutes.map((m) => unmuteEscalationChat(m.chat_id)),
+      )
+      const count = results.filter(
+        (r): r is PromiseFulfilledResult<boolean> =>
+          r.status === "fulfilled" && r.value,
+      ).length
       await refreshMutes()
       return count
     } finally {

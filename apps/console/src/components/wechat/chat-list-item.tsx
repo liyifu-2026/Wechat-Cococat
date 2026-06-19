@@ -1,4 +1,4 @@
-import type { MouseEvent } from "react"
+import { memo, type MouseEvent } from "react"
 import { BellOff, Shield, Timer } from "lucide-react"
 import { useTranslation } from "react-i18next"
 import type { DriverChat } from "@/lib/driver-client"
@@ -13,17 +13,19 @@ export type ChatListItemProps = {
   isPinned: boolean
   showTodoBadge?: boolean
   showMutedBadge?: boolean
+  unreadCount?: number
   onClick: () => void
   onContextMenu: (event: MouseEvent<HTMLButtonElement>) => void
 }
 
-export function ChatListItem({
+function ChatListItemComponent({
   chat,
   isActive,
   isMaintainer,
   isPinned,
   showTodoBadge = false,
   showMutedBadge = false,
+  unreadCount = 0,
   onClick,
   onContextMenu,
 }: ChatListItemProps) {
@@ -89,15 +91,26 @@ export function ChatListItem({
               </span>
             ) : null}
           </span>
-          {chat.lastMessagePreview && (
-            <WechatEmojiText
-              text={chat.lastMessagePreview}
-              emojiSize={14}
-              className="mt-0.5 block truncate text-xs text-[var(--wx-muted)]"
-            />
-          )}
+          <span className="mt-0.5 flex min-w-0 items-center gap-2">
+            {chat.lastMessagePreview ? (
+              <WechatEmojiText
+                text={chat.lastMessagePreview}
+                emojiSize={14}
+                className="block min-w-0 flex-1 truncate text-xs text-[var(--wx-muted)]"
+              />
+            ) : (
+              <span className="min-w-0 flex-1" />
+            )}
+            {unreadCount > 0 && (
+              <span className="flex h-4 min-w-4 shrink-0 items-center justify-center rounded-full bg-[var(--wx-warn-badge)] px-1 text-[10px] font-semibold leading-none text-white">
+                {unreadCount > 99 ? "99+" : unreadCount}
+              </span>
+            )}
+          </span>
         </span>
       </button>
     </li>
   )
 }
+
+export const ChatListItem = memo(ChatListItemComponent)

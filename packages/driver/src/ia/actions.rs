@@ -42,9 +42,12 @@ pub fn close_window() -> Action {
 // Login Actions
 // ============================================
 
+pub const LOGIN_BUTTON_SELECTOR: &str =
+    r#"push-button[name=/^(Log In|Open WeChat|Enter Weixin)$/]"#;
+
 pub fn click_login() -> Action {
     Action::ClickSelector {
-        selector: r#"push-button[name=/^(Log In|Open WeChat)$/]"#.to_string(),
+        selector: LOGIN_BUTTON_SELECTOR.to_string(),
     }
 }
 

@@ -39,17 +39,18 @@ describe("inbox-optimistic-send", () => {
   })
 
   it("reconciles by clientMsgId without cross-resolving same content", () => {
+    const now = Date.now()
     const pendingA: OptimisticPending = {
       clientMsgId: "client-a",
       chatId: "chat-1",
       text: "hello",
-      createdAt: Date.parse("2026-06-16T10:01:00.000Z"),
+      createdAt: now - 2_000,
     }
     const pendingB: OptimisticPending = {
       clientMsgId: "client-b",
       chatId: "chat-1",
       text: "hello",
-      createdAt: Date.parse("2026-06-16T10:02:00.000Z"),
+      createdAt: now - 1_000,
     }
 
     const fetched = [serverMsg(100, "hello", "client-a")]
@@ -73,7 +74,7 @@ describe("inbox-optimistic-send", () => {
       clientMsgId: "client-a",
       chatId: "chat-1",
       text: "hello",
-      createdAt: Date.parse("2026-06-16T10:01:00.000Z"),
+      createdAt: Date.now() - 1_000,
     }
     const fetched = [serverMsg(100, "hello")]
     const { messages, resolvedClientIds } = applyOptimisticLayer(fetched, [

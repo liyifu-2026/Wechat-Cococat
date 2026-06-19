@@ -15,6 +15,7 @@ import {
 import { useConsoleStore } from "@/stores/console-store"
 import { useAiAssistStore } from "@/stores/ai-assist-store"
 import { useToastStore } from "@/stores/toast-store"
+import { useInboxUnreadStore } from "@/stores/inbox-unread-store"
 import { runStackOrchestrator } from "@/lib/stack-orchestrator"
 import { useComposeHeightVar } from "@/hooks/use-compose-height-var"
 
@@ -36,6 +37,7 @@ export function InboxModule() {
   const addToast = useToastStore((s) => s.addToast)
   const health = useStackHealth()
   const navigateSystemWechat = useConsoleStore((s) => s.navigateSystemWechat)
+  const pendingWeChatChatId = useConsoleStore((s) => s.pendingWeChatChatId)
   const consumePendingWeChatChatId = useConsoleStore(
     (s) => s.consumePendingWeChatChatId,
   )
@@ -99,10 +101,10 @@ export function InboxModule() {
   })
 
   useEffect(() => {
-    if (gate.kind !== "ready") return
+    if (gate.kind !== "ready" || !pendingWeChatChatId) return
     const chatId = consumePendingWeChatChatId()
     if (chatId) void openChatById(chatId)
-  }, [gate.kind, consumePendingWeChatChatId, openChatById])
+  }, [gate.kind, pendingWeChatChatId, consumePendingWeChatChatId, openChatById])
 
   async function handleUnmute(chatId: string) {
     try {
@@ -240,6 +242,8 @@ export function InboxModule() {
             onMarkChatDone={(id) => void handleMarkDone(id)}
             onMarkTodoChat={(id, name) => void handleMarkTodo(id, name)}
             onMuteChat={(id, name) => void handleMute(id, name)}
+            onMarkChatRead={(id) => useInboxUnreadStore.getState().markChatAsRead(id)}
+            onMarkChatUnread={(id) => useInboxUnreadStore.getState().markChatAsUnread(id)}
             agentProxy={agentProxy}
             onRefreshMessages={(chatId) => void inbox.onMessageSent(chatId)}
             onBeforeSend={(chatId, text) => inbox.appendOptimisticSend(chatId, text)}

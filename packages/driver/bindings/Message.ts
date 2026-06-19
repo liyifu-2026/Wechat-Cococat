@@ -5,4 +5,8 @@ export type Message = { localId: number, serverId: number, chatId: string, sende
 /**
  * Relative path under `/data` (e.g. `artifacts/{chatId}/{localId}.jpg`) when exported.
  */
-artifactRef?: string, mediaKind?: string, };
+artifactRef?: string, mediaKind?: string, 
+/**
+ * Console optimistic-send id; attached after send reconciles with DB row.
+ */
+clientMsgId?: string, };

@@ -38,7 +38,9 @@ impl Plan for LoginPlan {
     type PlanState = LoginPlanState;
     type Params = LoginParams;
 
-    fn id(&self) -> &str { "login" }
+    fn id(&self) -> &str {
+        "login"
+    }
 
     fn initial_plan_state(&self) -> LoginPlanState {
         LoginPlanState {
@@ -68,7 +70,12 @@ impl Plan for LoginPlan {
         _a11y: &A11yNode,
         session_id: &str,
     ) -> Option<SelectedAction> {
-        let frame = || identified.main_window.as_ref().and_then(|m| m.frame.clone());
+        let frame = || {
+            identified
+                .main_window
+                .as_ref()
+                .and_then(|m| m.frame.clone())
+        };
 
         // Dismiss popups first
         if state.popup.is_some() && identified.popup.is_some() {
@@ -79,15 +86,14 @@ impl Plan for LoginPlan {
         }
 
         match plan_state.phase.clone() {
-            LoginPhase::Initializing => {
-                handle_initializing(state, params, plan_state, &frame)
-            }
-            LoginPhase::Authenticating => {
-                handle_authenticating(state, params, plan_state, &frame)
-            }
+            LoginPhase::Initializing => handle_initializing(state, params, plan_state, &frame),
+            LoginPhase::Authenticating => handle_authenticating(state, params, plan_state, &frame),
             LoginPhase::Maximizing => {
                 plan_state.phase = LoginPhase::DetectingUser;
-                Some(SelectedAction { action: actions::wait(500), frame: None })
+                Some(SelectedAction {
+                    action: actions::wait(500),
+                    frame: None,
+                })
             }
             LoginPhase::DetectingUser => {
                 handle_detecting_user(state, plan_state, session_id, frame()).await
@@ -95,9 +101,10 @@ impl Plan for LoginPlan {
             LoginPhase::ExtractingKeys => {
                 handle_extracting_keys(plan_state, session_id, frame()).await
             }
-            LoginPhase::Done => {
-                Some(SelectedAction { action: actions::wait_short(), frame: None })
-            }
+            LoginPhase::Done => Some(SelectedAction {
+                action: actions::wait_short(),
+                frame: None,
+            }),
         }
     }
 }
@@ -120,7 +127,10 @@ fn handle_initializing(
             } else {
                 actions::click_back()
             };
-            Some(SelectedAction { action, frame: frame() })
+            Some(SelectedAction {
+                action,
+                frame: frame(),
+            })
         }
         _ => {
             plan_state.phase = LoginPhase::Authenticating;
@@ -146,9 +156,12 @@ fn handle_authenticating(
                             Action::Emit {
                                 event: SubscriptionEvent {
                                     event_type: "qr".to_string(),
-                                    data: [
-                                        ("qrData".to_string(), serde_json::Value::String(qr.clone())),
-                                    ].into_iter().collect(),
+                                    data: [(
+                                        "qrData".to_string(),
+                                        serde_json::Value::String(qr.clone()),
+                                    )]
+                                    .into_iter()
+                                    .collect(),
                                 },
                             },
                             actions::wait(500),
@@ -157,7 +170,10 @@ fn handle_authenticating(
                     });
                 }
             }
-            Some(SelectedAction { action: actions::wait(500), frame: None })
+            Some(SelectedAction {
+                action: actions::wait(500),
+                frame: None,
+            })
         }
 
         MainWindowView::LoginAccount => {
@@ -188,7 +204,10 @@ fn handle_authenticating(
             } else {
                 actions::click_login()
             };
-            Some(SelectedAction { action, frame: frame() })
+            Some(SelectedAction {
+                action,
+                frame: frame(),
+            })
         }
 
         MainWindowView::LoginPhoneConfirm => {
@@ -201,8 +220,12 @@ fn handle_authenticating(
                                 event_type: "phone_confirm".to_string(),
                                 data: [(
                                     "message".to_string(),
-                                    serde_json::Value::String("Please confirm login on your phone".to_string()),
-                                )].into_iter().collect(),
+                                    serde_json::Value::String(
+                                        "Please confirm login on your phone".to_string(),
+                                    ),
+                                )]
+                                .into_iter()
+                                .collect(),
                             },
                         },
                         actions::wait(500),
@@ -210,12 +233,16 @@ fn handle_authenticating(
                     frame: frame(),
                 });
             }
-            Some(SelectedAction { action: actions::wait(500), frame: None })
+            Some(SelectedAction {
+                action: actions::wait(500),
+                frame: None,
+            })
         }
 
-        MainWindowView::LoginLoading => {
-            Some(SelectedAction { action: actions::wait(500), frame: None })
-        }
+        MainWindowView::LoginLoading => Some(SelectedAction {
+            action: actions::wait(500),
+            frame: None,
+        }),
 
         MainWindowView::Chat | MainWindowView::ChatOpen => {
             plan_state.phase = LoginPhase::Maximizing;
@@ -236,7 +263,10 @@ fn handle_authenticating(
             } else {
                 actions::click_back()
             };
-            Some(SelectedAction { action, frame: frame() })
+            Some(SelectedAction {
+                action,
+                frame: frame(),
+            })
         }
     }
 }
@@ -247,8 +277,14 @@ async fn handle_detecting_user(
     session_id: &str,
     frame: Option<FrameHint>,
 ) -> Option<SelectedAction> {
-    if !matches!(state.main_window.view, MainWindowView::Chat | MainWindowView::ChatOpen) {
-        return Some(SelectedAction { action: actions::wait(500), frame: None });
+    if !matches!(
+        state.main_window.view,
+        MainWindowView::Chat | MainWindowView::ChatOpen
+    ) {
+        return Some(SelectedAction {
+            action: actions::wait(500),
+            frame: None,
+        });
     }
 
     // All DB access is scoped in blocks so MutexGuard is dropped before any await
@@ -276,7 +312,8 @@ async fn handle_detecting_user(
             db.execute(
                 "UPDATE sessions SET wechat_pid = ?1, updated_at = ?2 WHERE id = ?3",
                 params![pid, now, session_id],
-            ).ok();
+            )
+            .ok();
         }
     }
 
@@ -298,10 +335,9 @@ async fn handle_detecting_user(
                         Action::Emit {
                             event: SubscriptionEvent {
                                 event_type: "login_success".to_string(),
-                                data: [(
-                                    "userId".to_string(),
-                                    serde_json::Value::String(acct),
-                                )].into_iter().collect(),
+                                data: [("userId".to_string(), serde_json::Value::String(acct))]
+                                    .into_iter()
+                                    .collect(),
                             },
                         },
                         actions::wait_short(),
@@ -319,8 +355,12 @@ async fn handle_detecting_user(
                         event_type: "status".to_string(),
                         data: [(
                             "message".to_string(),
-                            serde_json::Value::String("Getting your WeChat messages...".to_string()),
-                        )].into_iter().collect(),
+                            serde_json::Value::String(
+                                "Getting your WeChat messages...".to_string(),
+                            ),
+                        )]
+                        .into_iter()
+                        .collect(),
                     },
                 },
                 actions::wait_short(),
@@ -331,22 +371,17 @@ async fn handle_detecting_user(
 
     plan_state.detect_retries += 1;
     if plan_state.detect_retries >= 10 {
-        plan_state.phase = LoginPhase::Done;
-        return Some(SelectedAction {
-            action: actions::sequence(vec![
-                Action::Emit {
-                    event: SubscriptionEvent {
-                        event_type: "login_success".to_string(),
-                        data: std::collections::HashMap::new(),
-                    },
-                },
-                actions::wait_short(),
-            ]),
-            frame: frame.clone(),
-        });
+        tracing::error!(
+            "[login] failed to verify logged-in user after {} retries",
+            plan_state.detect_retries
+        );
+        return None;
     }
 
-    Some(SelectedAction { action: actions::wait(2000), frame: None })
+    Some(SelectedAction {
+        action: actions::wait(2000),
+        frame: None,
+    })
 }
 
 async fn handle_extracting_keys(
@@ -386,11 +421,14 @@ async fn handle_extracting_keys(
             Action::Emit {
                 event: SubscriptionEvent {
                     event_type: "login_success".to_string(),
-                    data: plan_state.account_dir.as_ref()
-                        .map(|a| [(
-                            "userId".to_string(),
-                            serde_json::Value::String(a.clone()),
-                        )].into_iter().collect())
+                    data: plan_state
+                        .account_dir
+                        .as_ref()
+                        .map(|a| {
+                            [("userId".to_string(), serde_json::Value::String(a.clone()))]
+                                .into_iter()
+                                .collect()
+                        })
                         .unwrap_or_default(),
                 },
             },

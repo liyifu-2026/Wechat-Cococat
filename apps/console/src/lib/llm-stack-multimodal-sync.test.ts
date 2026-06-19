@@ -66,6 +66,20 @@ describe("multimodalConfigFromWikiIngestRole", () => {
     expect(mm.enabled).toBe(false);
   });
 
+  it("turns off ingest caption when the resolved model has no vision", () => {
+    const stack = defaultLlmStack("deepseek", "deepseek-chat");
+    stack.roles.wikiIngestCaption = {
+      mode: "inherit",
+      inheritFrom: "chat",
+      enabled: true,
+    };
+    const mm = multimodalConfigFromWikiIngestRole(stack, {}, {
+      ...fallback,
+      model: "deepseek-chat",
+    });
+    expect(mm.enabled).toBe(false);
+  });
+
   it("uses stack wikiIngestConcurrency", () => {
     const stack = defaultLlmStack("xiaomi-mimo", "mimo-v2.5-pro");
     stack.wikiIngestConcurrency = 8;

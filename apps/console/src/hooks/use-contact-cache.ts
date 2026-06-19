@@ -9,13 +9,14 @@ import {
 } from "@/lib/driver-client"
 
 const PREFETCH_CONCURRENCY = 6
+const CONTACT_CACHE_TTL_MS = 5 * 60 * 1000
 
 type ContactCacheSnapshot = {
   loggedInUser: string | null
   version: number
 }
 
-let cache = new Map<string, DriverContact>()
+let cache = new Map<string, { contact: DriverContact; fetchedAt: number }>()
 let loggedInUser: string | null = null
 let version = 0
 const listeners = new Set<() => void>()
@@ -50,7 +51,9 @@ async function loadContact(username: string): Promise<DriverContact | null> {
   if (!id) return null
 
   const hit = cache.get(id)
-  if (hit) return hit
+  if (hit && Date.now() - hit.fetchedAt < CONTACT_CACHE_TTL_MS) {
+    return hit.contact
+  }
 
   const pending = inflight.get(id)
   if (pending) return pending
@@ -59,7 +62,7 @@ async function loadContact(username: string): Promise<DriverContact | null> {
     try {
       const contact = await fetchDriverContact(id)
       if (contact) {
-        cache.set(id, contact)
+        cache.set(id, { contact, fetchedAt: Date.now() })
         notify()
       }
       return contact
@@ -76,7 +79,13 @@ async function loadContact(username: string): Promise<DriverContact | null> {
 
 async function prefetchIds(ids: string[]): Promise<void> {
   const queue = [...new Set(ids.map((id) => id.trim()).filter(Boolean))].filter(
-    (id) => !cache.has(id) && !inflight.has(id),
+    (id) => {
+      const hit = cache.get(id)
+      return (
+        !inflight.has(id) &&
+        (!hit || Date.now() - hit.fetchedAt >= CONTACT_CACHE_TTL_MS)
+      )
+    },
   )
   if (queue.length === 0) return
 
@@ -135,11 +144,11 @@ export function useContactCache() {
 
   const getContact = useCallback((username: string | undefined | null) => {
     if (!username) return undefined
-    return cache.get(username.trim())
+    return cache.get(username.trim())?.contact
   }, [snapshot.version])
 
   const loggedInContact = snapshot.loggedInUser
-    ? cache.get(snapshot.loggedInUser)
+    ? cache.get(snapshot.loggedInUser)?.contact
     : undefined
 
   return {

@@ -124,6 +124,9 @@ export function SystemWechatConnect() {
       case "phone_confirm":
         setLoginStatus(event.message ?? t("console.wechat.phoneConfirm"))
         break
+      case "login_account":
+        setLoginStatus(event.message ?? t("wechat.login.loginAccount"))
+        break
       case "login_success":
         loginDoneRef.current = true
         setLoginStatus(t("console.wechat.loginSuccess"))

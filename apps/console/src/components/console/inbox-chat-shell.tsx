@@ -67,12 +67,20 @@ import {
 import { buildInboxMessageRows } from "@/lib/inbox-message-time-divider"
 import { useLightboxStore } from "@/stores/lightbox-store"
 import { useConsoleStore } from "@/stores/console-store"
+import { useInboxUnreadStore } from "@/stores/inbox-unread-store"
 import { isAiAssistPanelOpen, useAiAssistStore } from "@/stores/ai-assist-store"
 import { InboxAiAssistOverlay } from "@/components/wechat/inbox-ai-assist-overlay"
 import {
   INBOX_AI_ASSIST_HOST_ID,
   INBOX_AI_EXPAND_HOST_ID,
 } from "@/lib/inbox-ai-hosts"
+
+const MESSAGE_VIRTUALIZE_THRESHOLD = 300
+const MESSAGE_ROW_ESTIMATE_PX = 84
+const MESSAGE_OVERSCAN_ROWS = 12
+const CHAT_LIST_VIRTUALIZE_THRESHOLD = 120
+const CHAT_ROW_ESTIMATE_PX = 72
+const CHAT_OVERSCAN_ROWS = 8
 
 export type { InboxListFilter }
 
@@ -92,6 +100,8 @@ interface InboxChatShellProps {
   onMarkChatDone?: (chatId: string) => void
   onMarkTodoChat?: (chatId: string, chatName: string) => void
   onMuteChat?: (chatId: string, chatName: string) => void
+  onMarkChatRead?: (chatId: string) => void
+  onMarkChatUnread?: (chatId: string) => void
   agentProxy: ReturnType<typeof useAgentProxy>
   onRefreshMessages: (chatId: string) => void
   onBeforeSend?: (chatId: string, text: string) => string
@@ -155,6 +165,8 @@ export function InboxChatShell({
   onMarkChatDone,
   onMarkTodoChat,
   onMuteChat,
+  onMarkChatRead,
+  onMarkChatUnread,
   agentProxy,
   onRefreshMessages,
   onBeforeSend,
@@ -180,8 +192,12 @@ export function InboxChatShell({
 }: InboxChatShellProps) {
   const { t } = useTranslation()
   const navigateContactProfile = useConsoleStore((s) => s.navigateContactProfile)
+  const unreadCountsByChatId = useInboxUnreadStore(
+    (s) => s.unreadCountsByChatId,
+  )
   const aiPanelOpen = useAiAssistStore((s) => isAiAssistPanelOpen(s.layer))
   const messagesScrollRef = useRef<HTMLDivElement>(null)
+  const chatListScrollRef = useRef<HTMLUListElement>(null)
   const pendingScrollRestore = useRef<{ hOld: number; sOld: number } | null>(
     null,
   )
@@ -193,6 +209,14 @@ export function InboxChatShell({
   const loadingNewerRef = useRef(false)
   const [highlightLocalId, setHighlightLocalId] = useState<number | null>(null)
   const [awayFromBottom, setAwayFromBottom] = useState(false)
+  const [messageViewport, setMessageViewport] = useState({
+    scrollTop: 0,
+    height: 0,
+  })
+  const [chatListViewport, setChatListViewport] = useState({
+    scrollTop: 0,
+    height: 0,
+  })
   const [moreOpen, setMoreOpen] = useState(false)
   const [chatContextMenu, setChatContextMenu] = useState<{
     chatId: string
@@ -259,6 +283,58 @@ export function InboxChatShell({
     },
     [muteByChatId, onMarkChatDone, onMarkTodoChat, onMuteChat, onUnmuteChat],
   )
+  const chatListTopEstimate =
+    (messageHitsLoading || messageHits.length > 0) &&
+    listQuery.trim().length >= 1
+      ? Math.max(1, messageHits.length) * 48 + 36
+      : 0
+  const pinnedEstimate =
+    pinnedSection.length > 0
+      ? 36 + (isPinnedSectionCollapsed ? 0 : pinnedSection.length * CHAT_ROW_ESTIMATE_PX)
+      : 0
+  const shouldVirtualizeChats =
+    normalSection.length > CHAT_LIST_VIRTUALIZE_THRESHOLD
+  const normalChatWindow = useMemo(() => {
+    if (!shouldVirtualizeChats) {
+      return {
+        chats: normalSection,
+        topSpacer: 0,
+        bottomSpacer: 0,
+      }
+    }
+    const adjustedTop = Math.max(
+      0,
+      chatListViewport.scrollTop - chatListTopEstimate - pinnedEstimate,
+    )
+    const start = Math.max(
+      0,
+      Math.floor(adjustedTop / CHAT_ROW_ESTIMATE_PX) - CHAT_OVERSCAN_ROWS,
+    )
+    const visibleCount =
+      Math.ceil(chatListViewport.height / CHAT_ROW_ESTIMATE_PX) +
+      CHAT_OVERSCAN_ROWS * 2
+    const end = Math.min(normalSection.length, start + visibleCount)
+    return {
+      chats: normalSection.slice(start, end),
+      topSpacer: start * CHAT_ROW_ESTIMATE_PX,
+      bottomSpacer: (normalSection.length - end) * CHAT_ROW_ESTIMATE_PX,
+    }
+  }, [
+    chatListTopEstimate,
+    chatListViewport,
+    normalSection,
+    pinnedEstimate,
+    shouldVirtualizeChats,
+  ])
+
+  const handleChatListScroll = () => {
+    const el = chatListScrollRef.current
+    if (!el) return
+    setChatListViewport({
+      scrollTop: el.scrollTop,
+      height: el.clientHeight,
+    })
+  }
 
   const openChatContextMenu = useCallback(
     (chatId: string, event: React.MouseEvent<HTMLButtonElement>) => {
@@ -298,6 +374,36 @@ export function InboxChatShell({
     () => buildInboxMessageRows(orderedMessages),
     [orderedMessages],
   )
+  const shouldVirtualizeMessages =
+    messageRows.length > MESSAGE_VIRTUALIZE_THRESHOLD &&
+    pendingScrollLocalId == null
+  const messageWindow = useMemo(() => {
+    if (!shouldVirtualizeMessages) {
+      return {
+        rows: messageRows,
+        start: 0,
+        end: messageRows.length,
+        topSpacer: 0,
+        bottomSpacer: 0,
+      }
+    }
+    const start = Math.max(
+      0,
+      Math.floor(messageViewport.scrollTop / MESSAGE_ROW_ESTIMATE_PX) -
+        MESSAGE_OVERSCAN_ROWS,
+    )
+    const visibleCount =
+      Math.ceil(messageViewport.height / MESSAGE_ROW_ESTIMATE_PX) +
+      MESSAGE_OVERSCAN_ROWS * 2
+    const end = Math.min(messageRows.length, start + visibleCount)
+    return {
+      rows: messageRows.slice(start, end),
+      start,
+      end,
+      topSpacer: start * MESSAGE_ROW_ESTIMATE_PX,
+      bottomSpacer: (messageRows.length - end) * MESSAGE_ROW_ESTIMATE_PX,
+    }
+  }, [messageRows, messageViewport, shouldVirtualizeMessages])
 
   useEffect(() => {
     const prevId = prevSelectedChatIdRef.current
@@ -396,6 +502,15 @@ export function InboxChatShell({
   }, [messages])
 
   useLayoutEffect(() => {
+    const el = messagesScrollRef.current
+    if (!el) return
+    setMessageViewport({
+      scrollTop: el.scrollTop,
+      height: el.clientHeight,
+    })
+  }, [messageRows.length, selectedChat?.id])
+
+  useLayoutEffect(() => {
     if (pendingScrollLocalId == null || messagesLoading) return
     const el = messagesScrollRef.current
     if (!el) return
@@ -450,6 +565,10 @@ export function InboxChatShell({
   const handleMessagesScroll = () => {
     const el = messagesScrollRef.current
     if (!el) return
+    setMessageViewport({
+      scrollTop: el.scrollTop,
+      height: el.clientHeight,
+    })
 
     const nearBottom = isNearScrollBottom(el)
     const scrollingUp = el.scrollTop < lastScrollTopRef.current - 2
@@ -576,7 +695,9 @@ export function InboxChatShell({
           </div>
         </div>
         <ul
+          ref={chatListScrollRef}
           className={`min-h-0 flex-1 overflow-auto${aiPanelOpen ? " pointer-events-none" : ""}`}
+          onScroll={handleChatListScroll}
         >
           {(messageHitsLoading || messageHits.length > 0) &&
             listQuery.trim().length >= 1 && (
@@ -673,6 +794,7 @@ export function InboxChatShell({
                           isPinned={isPinned(chat.id)}
                           showTodoBadge={muteProps.showTodoBadge}
                           showMutedBadge={muteProps.showMutedBadge}
+                          unreadCount={unreadCountsByChatId[chat.id] ?? 0}
                           onClick={() => onSelectChat(chat)}
                           onContextMenu={(e) => openChatContextMenu(chat.id, e)}
                         />
@@ -682,7 +804,13 @@ export function InboxChatShell({
                   )}
                 </li>
               )}
-              {normalSection.map((chat) => {
+              {normalChatWindow.topSpacer > 0 && (
+                <li
+                  aria-hidden="true"
+                  style={{ height: normalChatWindow.topSpacer }}
+                />
+              )}
+              {normalChatWindow.chats.map((chat) => {
                 const muteProps = chatListItemProps(chat)
                 return (
                 <ChatListItem
@@ -693,16 +821,24 @@ export function InboxChatShell({
                   isPinned={false}
                   showTodoBadge={muteProps.showTodoBadge}
                   showMutedBadge={muteProps.showMutedBadge}
+                  unreadCount={unreadCountsByChatId[chat.id] ?? 0}
                   onClick={() => onSelectChat(chat)}
                   onContextMenu={(e) => openChatContextMenu(chat.id, e)}
                 />
                 )
               })}
+              {normalChatWindow.bottomSpacer > 0 && (
+                <li
+                  aria-hidden="true"
+                  style={{ height: normalChatWindow.bottomSpacer }}
+                />
+              )}
             </>
           )}
         </ul>
         {chatContextMenu && contextMenuChat && (() => {
           const muteProps = chatListItemProps(contextMenuChat)
+          const unread = unreadCountsByChatId[contextMenuChat.id] ?? 0
           return (
             <ChatListContextMenu
               x={chatContextMenu.x}
@@ -711,6 +847,7 @@ export function InboxChatShell({
               isPinned={isPinned(contextMenuChat.id)}
               isTodo={muteProps.showTodoBadge}
               isMuted={muteProps.showTodoBadge || muteProps.showMutedBadge}
+              hasUnread={unread > 0}
               onClose={() => setChatContextMenu(null)}
               onTogglePin={() => togglePin(contextMenuChat.id)}
               onToggleMaintainer={() =>
@@ -720,6 +857,8 @@ export function InboxChatShell({
               onMarkDone={muteProps.onMarkDone}
               onMute={muteProps.onMute}
               onUnmute={muteProps.onUnmute}
+              onMarkRead={() => onMarkChatRead?.(contextMenuChat.id)}
+              onMarkUnread={() => onMarkChatUnread?.(contextMenuChat.id)}
             />
           )
         })()}
@@ -885,7 +1024,13 @@ export function InboxChatShell({
                 </p>
               ) : (
                 <ul className="w-full space-y-3">
-                  {messageRows.map((row) => {
+                  {messageWindow.topSpacer > 0 && (
+                    <li
+                      aria-hidden="true"
+                      style={{ height: messageWindow.topSpacer }}
+                    />
+                  )}
+                  {messageWindow.rows.map((row) => {
                     if (row.kind === "divider" || row.kind === "system") {
                       const sysLocalId =
                         row.kind === "system" ? row.message.localId : undefined
@@ -994,6 +1139,7 @@ export function InboxChatShell({
                                 chatId={selectedChat.id}
                                 message={m}
                                 fallbackLabel={body}
+                                isSelf={self}
                                 onImageClick={openInboxImageLightbox}
                               />
                             ) : (
@@ -1019,6 +1165,12 @@ export function InboxChatShell({
                       </li>
                     )
                   })}
+                  {messageWindow.bottomSpacer > 0 && (
+                    <li
+                      aria-hidden="true"
+                      style={{ height: messageWindow.bottomSpacer }}
+                    />
+                  )}
                 </ul>
               )}
               {loadingNewer && (

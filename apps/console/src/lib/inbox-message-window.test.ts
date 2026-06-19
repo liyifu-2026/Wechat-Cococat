@@ -1,15 +1,17 @@
 import { describe, expect, it } from "vitest"
 import {
   mergeUniqueMessagesDesc,
+  messagesForChat,
   messageUnix,
   newestMessageUnix,
   oldestMessageUnix,
 } from "@/lib/inbox-message-window"
 import type { DriverMessage } from "@/lib/driver-client"
 
-function msg(localId: number, iso: string): DriverMessage {
+function msg(localId: number, iso: string, chatId?: string): DriverMessage {
   return {
     localId,
+    chatId,
     type: 1,
     timestamp: iso,
     content: `m${localId}`,
@@ -37,5 +39,24 @@ describe("inbox-message-window", () => {
     const b = [msg(3, "2024-01-03T00:00:00.000Z"), msg(2, "2024-01-02T00:00:00.000Z")]
     const merged = mergeUniqueMessagesDesc(a, b)
     expect(merged.map((m) => m.localId)).toEqual([3, 2, 1])
+  })
+
+  it("keeps same localId from different chats distinct", () => {
+    const a = [msg(9, "2024-01-02T00:00:00.000Z", "chat-a")]
+    const b = [msg(9, "2024-01-03T00:00:00.000Z", "chat-b")]
+    const merged = mergeUniqueMessagesDesc(a, b)
+    expect(merged.map((m) => m.chatId)).toEqual(["chat-b", "chat-a"])
+  })
+
+  it("filters mixed driver rows to the active chat when chatId is present", () => {
+    const mixed = [
+      msg(1, "2024-01-01T00:00:00.000Z", "chat-a"),
+      msg(2, "2024-01-01T00:00:00.000Z", "chat-b"),
+      msg(3, "2024-01-01T00:00:00.000Z"),
+    ]
+    expect(messagesForChat("chat-a", mixed).map((m) => m.localId)).toEqual([
+      1,
+      3,
+    ])
   })
 })

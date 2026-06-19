@@ -4,6 +4,7 @@
 use std::sync::{LazyLock, RwLock};
 use std::time::Duration;
 
+use base64::Engine;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -54,10 +55,6 @@ fn cached_token() -> Option<String> {
     TOKEN_CACHE.read().ok()?.clone()
 }
 
-pub fn has_cached_token() -> bool {
-    cached_token().is_some()
-}
-
 pub fn refresh_token_from_disk() -> Result<String, String> {
     let token = stack::read_cococat_token()?;
     update_cached_token(token.clone());
@@ -79,7 +76,26 @@ pub struct ProxyRequest {
     pub body: Option<Value>,
 }
 
-async fn execute_fetch(req: &ProxyRequest, token: &str) -> Result<(reqwest::StatusCode, Value), String> {
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProxyResponse {
+    pub status: u16,
+    pub body: Option<Value>,
+    pub text: Option<String>,
+    pub base64: Option<String>,
+    pub content_type: Option<String>,
+}
+
+impl ProxyResponse {
+    fn error_body(&self) -> Value {
+        self.body
+            .clone()
+            .or_else(|| self.text.as_ref().map(|text| Value::String(text.clone())))
+            .unwrap_or(Value::Null)
+    }
+}
+
+async fn execute_fetch(req: &ProxyRequest, token: &str) -> Result<ProxyResponse, String> {
     let path = req.path.trim();
     if path.is_empty() || !path.starts_with('/') {
         return Err("driver_fetch: path must start with /".into());
@@ -111,37 +127,80 @@ async fn execute_fetch(req: &ProxyRequest, token: &str) -> Result<(reqwest::Stat
         .map_err(|e| format!("Driver bridge network error: {e}"))?;
 
     let status = response.status();
-    let text = response
-        .text()
+    let content_type = response
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|h| h.to_str().ok())
+        .map(|s| s.to_string());
+    let bytes = response
+        .bytes()
         .await
         .map_err(|e| format!("Driver response read failed: {e}"))?;
 
-    if text.trim().is_empty() {
-        return Ok((status, Value::Null));
+    if bytes.is_empty() {
+        return Ok(ProxyResponse {
+            status: status.as_u16(),
+            body: Some(Value::Null),
+            text: None,
+            base64: None,
+            content_type,
+        });
     }
 
-    let json: Value = serde_json::from_str(&text).unwrap_or(Value::String(text));
-    Ok((status, json))
+    let content_type_str = content_type.as_deref().unwrap_or("");
+    if content_type_str.contains("application/json") {
+        let json = serde_json::from_slice(&bytes)
+            .map_err(|e| format!("Driver JSON parse failed: {e}"))?;
+        return Ok(ProxyResponse {
+            status: status.as_u16(),
+            body: Some(json),
+            text: None,
+            base64: None,
+            content_type,
+        });
+    }
+
+    if content_type_str.starts_with("text/") {
+        return Ok(ProxyResponse {
+            status: status.as_u16(),
+            body: None,
+            text: Some(String::from_utf8_lossy(&bytes).to_string()),
+            base64: None,
+            content_type,
+        });
+    }
+
+    Ok(ProxyResponse {
+        status: status.as_u16(),
+        body: None,
+        text: None,
+        base64: Some(base64::engine::general_purpose::STANDARD.encode(&bytes)),
+        content_type,
+    })
 }
 
-pub async fn driver_fetch_inner(req: ProxyRequest) -> Result<Value, String> {
+pub async fn driver_fetch_inner(req: ProxyRequest) -> Result<ProxyResponse, String> {
     let token = ensure_token()?;
-    let (status, json) = execute_fetch(&req, &token).await?;
+    let response = execute_fetch(&req, &token).await?;
+    let status = reqwest::StatusCode::from_u16(response.status)
+        .map_err(|e| format!("Driver bridge invalid status: {e}"))?;
 
     if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
         invalidate_token_cache();
         let retry_token = refresh_token_from_disk()?;
-        let (retry_status, retry_json) = execute_fetch(&req, &retry_token).await?;
+        let retry_response = execute_fetch(&req, &retry_token).await?;
+        let retry_status = reqwest::StatusCode::from_u16(retry_response.status)
+            .map_err(|e| format!("Driver bridge invalid retry status: {e}"))?;
         if retry_status.is_success() {
-            return Ok(retry_json);
+            return Ok(retry_response);
         }
-        return Err(format_driver_api_error(retry_status, &retry_json));
+        return Err(format_driver_api_error(retry_status, &retry_response.error_body()));
     }
 
     if status.is_success() {
-        Ok(json)
+        Ok(response)
     } else {
-        Err(format_driver_api_error(status, &json))
+        Err(format_driver_api_error(status, &response.error_body()))
     }
 }
 
@@ -150,7 +209,7 @@ fn format_driver_api_error(status: reqwest::StatusCode, body: &Value) -> String 
 }
 
 #[tauri::command]
-pub async fn driver_fetch(req: ProxyRequest) -> Result<Value, String> {
+pub async fn driver_fetch(req: ProxyRequest) -> Result<ProxyResponse, String> {
     driver_fetch_inner(req).await
 }
 

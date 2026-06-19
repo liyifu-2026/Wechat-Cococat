@@ -3,6 +3,7 @@ import type { AgentTool } from "@earendil-works/pi-agent-core";
 import type { Message, WeChatClient } from "@cococat/shared";
 import { applyDelay } from "./delays.js";
 import { stripReasoningLeaks } from "./reasoning.js";
+import { humanizeReplyText } from "./humanize.js";
 import { stripLeadingAtMentions } from "./mention-names.js";
 import { resolveSendImagePayload } from "./send-image.js";
 import { prepareServiceOutboundText } from "./stealth-send.js";
@@ -14,6 +15,34 @@ export const WECHAT_OUTBOUND_TOOL_NAMES = new Set([
 ]);
 
 export const MAX_SENDS_HARD_LIMIT = 5;
+
+const SEND_RETRY_DELAYS_MS = [100, 500, 1500];
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function retrySend(
+  fn: () => Promise<unknown>,
+  label: string,
+): Promise<void> {
+  for (let attempt = 0; attempt <= SEND_RETRY_DELAYS_MS.length; attempt++) {
+    try {
+      await fn();
+      return;
+    } catch (err) {
+      if (attempt < SEND_RETRY_DELAYS_MS.length) {
+        console.warn(
+          `[pi-wechat] ${label} attempt ${attempt + 1} failed, retrying in ${SEND_RETRY_DELAYS_MS[attempt]}ms:`,
+          err,
+        );
+        await sleep(SEND_RETRY_DELAYS_MS[attempt]!);
+      } else {
+        throw err;
+      }
+    }
+  }
+}
 
 export type WeChatToolContext = {
   client: WeChatClient;
@@ -74,7 +103,7 @@ export function createWeChatTools(ctx: WeChatToolContext): AgentTool[] {
       }
 
       const { text } = params as { text: string };
-      let cleaned = stripReasoningLeaks(text);
+      let cleaned = humanizeReplyText(stripReasoningLeaks(text));
       if (ctx.serviceStealthEnabled && ctx.stealthRetriedRef) {
         const prepared = prepareServiceOutboundText(
           cleaned,
@@ -94,11 +123,15 @@ export function createWeChatTools(ctx: WeChatToolContext): AgentTool[] {
           ? stripLeadingAtMentions(cleaned, mentionsForSend)
           : cleaned;
 
-      await ctx.client.sendMessage({
-        chatId: ctx.chatId,
-        text: body,
-        mentions: mentionsForSend,
-      });
+      await retrySend(
+        () =>
+          ctx.client.sendMessage({
+            chatId: ctx.chatId,
+            text: body,
+            mentions: mentionsForSend,
+          }),
+        `sendMessage to ${ctx.chatId}`,
+      );
       ctx.sendCountRef.current += 1;
       ctx.sentTextsRef.current.push(body);
 
@@ -137,10 +170,14 @@ export function createWeChatTools(ctx: WeChatToolContext): AgentTool[] {
         path,
       });
 
-      await ctx.client.sendMessage({
-        chatId: ctx.chatId,
-        image: { data: payload.data, mimeType: payload.mimeType },
-      });
+      await retrySend(
+        () =>
+          ctx.client.sendMessage({
+            chatId: ctx.chatId,
+            image: { data: payload.data, mimeType: payload.mimeType },
+          }),
+        `sendImage to ${ctx.chatId}`,
+      );
       ctx.sendCountRef.current += 1;
       ctx.sentTextsRef.current.push(payload.label);
 
@@ -165,7 +202,11 @@ export function createWeChatTools(ctx: WeChatToolContext): AgentTool[] {
     }),
     execute: async (_toolCallId, params) => {
       const { limit } = params as { limit?: number };
-      const messages = await ctx.client.listMessages(ctx.chatId, limit ?? 30);
+      const rawLimit = Number(limit ?? 30);
+      const safeLimit = Number.isFinite(rawLimit)
+        ? Math.min(100, Math.max(1, Math.floor(rawLimit)))
+        : 30;
+      const messages = await ctx.client.listMessages(ctx.chatId, safeLimit);
       const lines = messages.map((m) => formatListLine(m, ctx.isGroup));
       return {
         content: [

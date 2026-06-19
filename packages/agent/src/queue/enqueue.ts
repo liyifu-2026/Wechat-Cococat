@@ -10,6 +10,11 @@ function messageKey(localId: number): string {
   return String(localId);
 }
 
+export function isDuplicateJobError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return /\bjob\b[\s\S]*\balready exists\b/i.test(msg);
+}
+
 export async function collectUnseenLocalIds(
   client: WeChatClient,
   chatId: string,
@@ -48,8 +53,7 @@ export async function enqueueChatInbound(
   try {
     await queue.add("process_chat", data, { jobId: chat.chatId });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    if (!msg.toLowerCase().includes("job") && !msg.includes("exists")) {
+    if (!isDuplicateJobError(err)) {
       throw err;
     }
   }

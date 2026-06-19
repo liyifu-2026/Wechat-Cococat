@@ -62,8 +62,7 @@ fn migrate_to_encrypted(path: &str, key: &str) -> Result<Connection, String> {
     std::fs::remove_file(path).map_err(|e| format!("Failed to remove old db: {e}"))?;
     std::fs::remove_file(format!("{path}-wal")).ok();
     std::fs::remove_file(format!("{path}-shm")).ok();
-    std::fs::rename(&tmp_path, path)
-        .map_err(|e| format!("Failed to rename encrypted db: {e}"))?;
+    std::fs::rename(&tmp_path, path).map_err(|e| format!("Failed to rename encrypted db: {e}"))?;
 
     tracing::info!("[DB] Migrated unencrypted database to encrypted");
 
@@ -72,8 +71,7 @@ fn migrate_to_encrypted(path: &str, key: &str) -> Result<Connection, String> {
 
 /// Initialize the database: set encryption key, run migrations, set pragmas.
 pub fn init_db(key: &str) -> Result<(), String> {
-    let db_path =
-        std::env::var("AGENT_DB_PATH").unwrap_or_else(|_| "/data/agent.db".to_string());
+    let db_path = std::env::var("AGENT_DB_PATH").unwrap_or_else(|_| "/data/agent.db".to_string());
 
     // Ensure directory exists
     if let Some(parent) = Path::new(&db_path).parent() {
@@ -90,13 +88,18 @@ pub fn init_db(key: &str) -> Result<(), String> {
                 match migrate_to_encrypted(&db_path, key) {
                     Ok(c) => c,
                     Err(e) => {
-                        // Neither encrypted nor migratable — discard and recreate
+                        // Neither encrypted nor migratable — backup then recreate
+                        let ts = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_secs();
+                        let bak = format!("{db_path}.bak.{ts}");
                         tracing::warn!(
-                            "[DB] Cannot open or migrate existing db ({e}), removing and starting fresh"
+                            "[DB] Cannot open or migrate existing db ({e}), backing up to {bak} and starting fresh"
                         );
-                        std::fs::remove_file(&db_path).ok();
-                        std::fs::remove_file(format!("{db_path}-wal")).ok();
-                        std::fs::remove_file(format!("{db_path}-shm")).ok();
+                        let _ = std::fs::rename(&db_path, &bak);
+                        let _ = std::fs::rename(format!("{db_path}-wal"), format!("{bak}-wal"));
+                        let _ = std::fs::rename(format!("{db_path}-shm"), format!("{bak}-shm"));
                         open_encrypted(&db_path, key)
                             .map_err(|e| format!("Failed to create fresh encrypted db: {e}"))?
                     }
@@ -105,8 +108,7 @@ pub fn init_db(key: &str) -> Result<(), String> {
         }
     } else {
         // New DB — just open encrypted
-        open_encrypted(&db_path, key)
-            .map_err(|e| format!("Failed to create encrypted db: {e}"))?
+        open_encrypted(&db_path, key).map_err(|e| format!("Failed to create encrypted db: {e}"))?
     };
 
     // Run migrations (refinery)
@@ -128,7 +130,10 @@ pub fn get_db() -> std::sync::MutexGuard<'static, Connection> {
     DB.get()
         .expect("Database not initialized. Call init_db() first.")
         .lock()
-        .expect("Database mutex poisoned")
+        .unwrap_or_else(|poisoned| {
+            tracing::error!("[DB] mutex poisoned; recovering connection guard");
+            poisoned.into_inner()
+        })
 }
 
 #[cfg(test)]

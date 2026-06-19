@@ -1,4 +1,4 @@
-﻿use super::Plan;
+use super::Plan;
 use crate::ia::actions;
 use crate::ia::selectors::query_selector;
 use crate::ia::types::*;
@@ -15,6 +15,7 @@ pub struct SendMessageParams {
     pub image_mime: Option<String>,
     pub file_path: Option<String>,
     pub mentions: Vec<String>,
+    pub session: Option<Session>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -44,7 +45,9 @@ impl Plan for SendMessagePlan {
     type PlanState = SendMessagePlanState;
     type Params = SendMessageParams;
 
-    fn id(&self) -> &str { "send_message" }
+    fn id(&self) -> &str {
+        "send_message"
+    }
 
     fn initial_plan_state(&self) -> SendMessagePlanState {
         SendMessagePlanState {
@@ -79,7 +82,10 @@ impl Plan for SendMessagePlan {
                     if identified.popup.is_some() {
                         return Some(SelectedAction {
                             action: actions::dismiss_popup(),
-                            frame: identified.main_window.as_ref().and_then(|m| m.frame.clone()),
+                            frame: identified
+                                .main_window
+                                .as_ref()
+                                .and_then(|m| m.frame.clone()),
                         });
                     }
                 }
@@ -88,7 +94,10 @@ impl Plan for SendMessagePlan {
                     if plan_state.phase != SendMessagePhase::Mentioning {
                         return Some(SelectedAction {
                             action: actions::dismiss_popup(),
-                            frame: identified.main_window.as_ref().and_then(|m| m.frame.clone()),
+                            frame: identified
+                                .main_window
+                                .as_ref()
+                                .and_then(|m| m.frame.clone()),
                         });
                     }
                     return handle_mention(a11y, params, plan_state, identified);
@@ -109,22 +118,31 @@ impl Plan for SendMessagePlan {
 
                     let chat_list_item = query_selector(a11y, r#"list[name="Chats"] > list-item"#);
                     let click_xy = chat_list_item.and_then(|item| {
-                        item.bounds.as_ref().map(|b| (
-                            (b.x + b.width / 2.0).round(),
-                            (b.y + b.height / 2.0).round(),
-                        ))
+                        item.bounds.as_ref().map(|b| {
+                            (
+                                (b.x + b.width / 2.0).round(),
+                                (b.y + b.height / 2.0).round(),
+                            )
+                        })
                     });
 
                     // Always force-open target chat (Console may send to a different session than UI focus).
                     let result = open_chat(&params.chat_id, true, click_xy).await;
 
                     if !result.ok {
-                        tracing::warn!(
-                            "[send_message] open_chat failed for {}: {:?}",
-                            params.chat_id,
-                            result.error
-                        );
-                        return None;
+                        if main_state_id == Some("chat_open") {
+                            tracing::warn!(
+                                "[send_message] open_chat failed but chat_open already — proceeding: {}",
+                                result.error.as_deref().unwrap_or("unknown")
+                            );
+                        } else {
+                            tracing::warn!(
+                                "[send_message] open_chat failed for {}: {:?}",
+                                params.chat_id,
+                                result.error
+                            );
+                            return None;
+                        }
                     }
 
                     let skipped = result.skipped.unwrap_or(false);
@@ -134,7 +152,10 @@ impl Plan for SendMessagePlan {
                     if !skipped {
                         return Some(SelectedAction {
                             action: actions::wait_short(),
-                            frame: identified.main_window.as_ref().and_then(|m| m.frame.clone()),
+                            frame: identified
+                                .main_window
+                                .as_ref()
+                                .and_then(|m| m.frame.clone()),
                         });
                     }
                     continue;
@@ -152,7 +173,10 @@ impl Plan for SendMessagePlan {
                             );
                             return Some(SelectedAction {
                                 action: actions::wait_short(),
-                                frame: identified.main_window.as_ref().and_then(|m| m.frame.clone()),
+                                frame: identified
+                                    .main_window
+                                    .as_ref()
+                                    .and_then(|m| m.frame.clone()),
                             });
                         }
                         tracing::warn!(
@@ -210,7 +234,10 @@ impl Plan for SendMessagePlan {
                     if let Some(bounds) = &edit_node.bounds {
                         return Some(SelectedAction {
                             action: actions::click_bounds(bounds),
-                            frame: identified.main_window.as_ref().and_then(|m| m.frame.clone()),
+                            frame: identified
+                                .main_window
+                                .as_ref()
+                                .and_then(|m| m.frame.clone()),
                         });
                     }
                     return None;
@@ -229,10 +256,15 @@ impl Plan for SendMessagePlan {
                         plan_state.mention_attempts += 1;
                         return Some(SelectedAction {
                             action: actions::sequence(vec![
-                                Action::Key { combo: "at".to_string() },
+                                Action::Key {
+                                    combo: "at".to_string(),
+                                },
                                 Action::Wait { ms: 500 },
                             ]),
-                            frame: identified.main_window.as_ref().and_then(|m| m.frame.clone()),
+                            frame: identified
+                                .main_window
+                                .as_ref()
+                                .and_then(|m| m.frame.clone()),
                         });
                     }
 
@@ -250,13 +282,22 @@ impl Plan for SendMessagePlan {
                     plan_state.phase = SendMessagePhase::Confirming;
 
                     if let Some(fp) = &params.file_path {
-                        exec_command("paste-file", &[fp], &ExecOptions::default()).await;
+                        let exec_options = ExecOptions {
+                            session: params.session.clone(),
+                            ..ExecOptions::default()
+                        };
+                        exec_command("paste-file", &[fp], &exec_options).await;
                         return Some(SelectedAction {
                             action: actions::sequence(vec![
                                 Action::Wait { ms: 100 },
-                                Action::Key { combo: "Return".to_string() },
+                                Action::Key {
+                                    combo: "Return".to_string(),
+                                },
                             ]),
-                            frame: identified.main_window.as_ref().and_then(|m| m.frame.clone()),
+                            frame: identified
+                                .main_window
+                                .as_ref()
+                                .and_then(|m| m.frame.clone()),
                         });
                     }
 
@@ -265,13 +306,22 @@ impl Plan for SendMessagePlan {
                         if let Some(mime) = &params.image_mime {
                             args.push(mime);
                         }
-                        exec_command("paste-image", &args, &ExecOptions::default()).await;
+                        let exec_options = ExecOptions {
+                            session: params.session.clone(),
+                            ..ExecOptions::default()
+                        };
+                        exec_command("paste-image", &args, &exec_options).await;
                         return Some(SelectedAction {
                             action: actions::sequence(vec![
                                 Action::Wait { ms: 100 },
-                                Action::Key { combo: "Return".to_string() },
+                                Action::Key {
+                                    combo: "Return".to_string(),
+                                },
                             ]),
-                            frame: identified.main_window.as_ref().and_then(|m| m.frame.clone()),
+                            frame: identified
+                                .main_window
+                                .as_ref()
+                                .and_then(|m| m.frame.clone()),
                         });
                     }
 
@@ -279,14 +329,24 @@ impl Plan for SendMessagePlan {
                         let mut seq = Vec::new();
                         // ctrl+a wipes WeChat @-mention widgets; append after mentions instead.
                         if params.mentions.is_empty() {
-                            seq.push(Action::Key { combo: "ctrl+a".to_string() });
+                            seq.push(Action::Key {
+                                combo: "ctrl+a".to_string(),
+                            });
                         }
-                        seq.push(Action::Type { text: msg.clone(), selector: None });
+                        seq.push(Action::Type {
+                            text: msg.clone(),
+                            selector: None,
+                        });
                         seq.push(Action::Wait { ms: 100 });
-                        seq.push(Action::Key { combo: "Return".to_string() });
+                        seq.push(Action::Key {
+                            combo: "Return".to_string(),
+                        });
                         return Some(SelectedAction {
                             action: actions::sequence(seq),
-                            frame: identified.main_window.as_ref().and_then(|m| m.frame.clone()),
+                            frame: identified
+                                .main_window
+                                .as_ref()
+                                .and_then(|m| m.frame.clone()),
                         });
                     }
 
@@ -310,7 +370,10 @@ impl Plan for SendMessagePlan {
                         plan_state.phase = SendMessagePhase::Done;
                         return Some(SelectedAction {
                             action: actions::wait_short(),
-                            frame: identified.main_window.as_ref().and_then(|m| m.frame.clone()),
+                            frame: identified
+                                .main_window
+                                .as_ref()
+                                .and_then(|m| m.frame.clone()),
                         });
                     }
 
@@ -321,7 +384,10 @@ impl Plan for SendMessagePlan {
 
                     return Some(SelectedAction {
                         action: actions::wait_short(),
-                        frame: identified.main_window.as_ref().and_then(|m| m.frame.clone()),
+                        frame: identified
+                            .main_window
+                            .as_ref()
+                            .and_then(|m| m.frame.clone()),
                     });
                 }
 
@@ -345,10 +411,18 @@ fn handle_mention(
     // then hit Enter to select
     Some(SelectedAction {
         action: actions::sequence(vec![
-            Action::Type { text: target.clone(), selector: None },
+            Action::Type {
+                text: target.clone(),
+                selector: None,
+            },
             Action::Wait { ms: 200 },
-            Action::Key { combo: "Return".to_string() },
+            Action::Key {
+                combo: "Return".to_string(),
+            },
         ]),
-        frame: identified.main_window.as_ref().and_then(|m| m.frame.clone()),
+        frame: identified
+            .main_window
+            .as_ref()
+            .and_then(|m| m.frame.clone()),
     })
 }
