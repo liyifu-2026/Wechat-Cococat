@@ -7,6 +7,7 @@ import {
   startDelayedThoughtfulAck,
   type DelayedAckHandle,
 } from "./thoughtful-ack.js";
+import { resolveThoughtfulReflect } from "./effective-config.js";
 
 const COMPLEX_HINT =
   /分析|对比|规划|为什么|怎么办|详细|仔细|评估|建议|总结|优缺点/;
@@ -30,9 +31,8 @@ export function shouldOffloadThoughtfulToOutbound(
 }
 
 export function shouldRunThoughtfulReflect(style: ChatStyle): boolean {
-  const env = process.env.WECHAT_THOUGHTFUL_REFLECT?.trim().toLowerCase();
-  if (env === "1" || env === "true" || env === "yes") return true;
-  if (env === "0" || env === "false" || env === "no") return false;
+  const env = resolveThoughtfulReflect();
+  if (env !== undefined) return env;
   return style.thoughtfulReflect === true;
 }
 

@@ -4,6 +4,11 @@ import type { WeChatClient } from "@cococat/shared";
 import { appendAgentTrace } from "./agent-trace.js";
 import { chatDirPath } from "./paths.js";
 import { isServicePersona, type ChatStyle } from "./style.js";
+import {
+  resolveThoughtfulAckPhrases,
+  resolveThoughtfulAckFlag,
+  resolveThoughtfulAckDelayMs,
+} from "./effective-config.js";
 
 const DEFAULT_SERVICE_ACK_PHRASES = [
   "稍等",
@@ -53,14 +58,8 @@ function saveAckHistory(chatId: string, history: AckHistory): void {
 }
 
 export function resolveAckPhrasePool(style: ChatStyle): string[] {
-  const env = process.env.WECHAT_THOUGHTFUL_ACK_PHRASES?.trim();
-  if (env) {
-    const parts = env
-      .split("|")
-      .map((p) => p.trim())
-      .filter(Boolean);
-    if (parts.length > 0) return parts;
-  }
+  const envParts = resolveThoughtfulAckPhrases();
+  if (envParts) return envParts;
   if (Array.isArray(style.thoughtfulAckPhrases) && style.thoughtfulAckPhrases.length > 0) {
     return style.thoughtfulAckPhrases;
   }
@@ -93,16 +92,15 @@ export function recordThoughtfulAckSent(chatId: string, phrase: string): void {
 }
 
 export function shouldUseDelayedThoughtfulAck(style: ChatStyle): boolean {
-  const env = process.env.WECHAT_THOUGHTFUL_ACK?.trim().toLowerCase();
-  if (env === "0" || env === "false" || env === "no") return false;
+  const flag = resolveThoughtfulAckFlag();
+  if (flag === false) return false;
 
   if (isServicePersona(style)) {
     if (style.thoughtfulAck === false) return false;
     return true;
   }
 
-  if (env === "1" || env === "true") return true;
-  if (env && env !== "1" && env !== "true") return true;
+  if (flag === true) return true;
   if (style.thoughtfulAck === true) return true;
   if (typeof style.thoughtfulAck === "string" && style.thoughtfulAck.trim()) {
     return true;
@@ -111,12 +109,7 @@ export function shouldUseDelayedThoughtfulAck(style: ChatStyle): boolean {
 }
 
 export function thoughtfulAckDelayMs(): number {
-  const env = process.env.WECHAT_THOUGHTFUL_ACK_DELAY_MS?.trim();
-  if (env) {
-    const n = Number(env);
-    if (!Number.isNaN(n) && n >= 0) return n;
-  }
-  return DEFAULT_DELAY_MS;
+  return resolveThoughtfulAckDelayMs();
 }
 
 export type DelayedAckHandle = {

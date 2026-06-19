@@ -48,10 +48,11 @@ function finalizeOutcome(
   };
 }
 
+import { resolveUnifiedGateLlm } from "../effective-config.js";
+
 export function isUnifiedGateLlmEnabled(config: EscalationConfig): boolean {
-  const env = process.env.WECHAT_UNIFIED_GATE_LLM?.trim().toLowerCase();
-  if (env === "0" || env === "false" || env === "no") return false;
-  if (env === "1" || env === "true" || env === "yes") return true;
+  const env = resolveUnifiedGateLlm();
+  if (env !== undefined) return env;
   return config.triageUseLlm;
 }
 

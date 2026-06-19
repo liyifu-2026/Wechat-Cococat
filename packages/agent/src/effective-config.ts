@@ -223,3 +223,119 @@ export function resolveGroupConfig(
     groupHistoryLimit,
   };
 }
+
+// ── LLM API config (shared fallback chain for caption / triage) ──
+
+export type LlmApiConfig = {
+  apiUrl: string;
+  apiKey: string;
+  model: string;
+};
+
+function resolveLlmApiConfig(
+  env: NodeJS.ProcessEnv,
+  opts: {
+    enabledKey: string;
+    apiKeyKey: string;
+    apiUrlKey: string;
+    modelKey: string;
+  },
+): LlmApiConfig | undefined {
+  if (env[opts.enabledKey] === "false") return undefined;
+
+  const apiKey =
+    env[opts.apiKeyKey]?.trim() ||
+    env.TDAI_LLM_API_KEY?.trim() ||
+    env.XIAOMI_TOKEN_PLAN_CN_API_KEY?.trim();
+  if (!apiKey) return undefined;
+
+  const apiUrl = (
+    env[opts.apiUrlKey]?.trim() ||
+    env.TDAI_LLM_BASE_URL?.trim() ||
+    env.XIAOMI_API_BASE?.trim() ||
+    "https://token-plan-cn.xiaomimimo.com/v1"
+  ).replace(/\/$/, "");
+
+  const model =
+    env[opts.modelKey]?.trim() ||
+    env.TDAI_LLM_MODEL?.trim() ||
+    env.PI_MODEL?.trim() ||
+    "deepseek-chat";
+
+  return { apiUrl, apiKey, model };
+}
+
+export function resolveCaptionLlmConfig(
+  env: NodeJS.ProcessEnv = process.env,
+): LlmApiConfig | undefined {
+  return resolveLlmApiConfig(env, {
+    enabledKey: "WECHAT_CAPTION_ENABLED",
+    apiKeyKey: "WECHAT_CAPTION_API_KEY",
+    apiUrlKey: "WECHAT_CAPTION_API_URL",
+    modelKey: "WECHAT_CAPTION_MODEL",
+  });
+}
+
+export function resolveTriageLlmConfig(
+  env: NodeJS.ProcessEnv = process.env,
+): LlmApiConfig | undefined {
+  return resolveLlmApiConfig(env, {
+    enabledKey: "WECHAT_TRIAGE_LLM_ENABLED",
+    apiKeyKey: "WECHAT_TRIAGE_API_KEY",
+    apiUrlKey: "WECHAT_TRIAGE_API_URL",
+    modelKey: "WECHAT_TRIAGE_MODEL",
+  });
+}
+
+// ── thoughtful config ──────────────────────────────────────
+
+export function resolveThoughtfulAckPhrases(
+  env: NodeJS.ProcessEnv = process.env,
+): string[] | undefined {
+  const raw = env.WECHAT_THOUGHTFUL_ACK_PHRASES?.trim();
+  if (!raw) return undefined;
+  const parts = raw.split("|").map((p) => p.trim()).filter(Boolean);
+  return parts.length > 0 ? parts : undefined;
+}
+
+/** Resolve WECHAT_THOUGHTFUL_ACK flag. undefined = not set in env. */
+export function resolveThoughtfulAckFlag(
+  env: NodeJS.ProcessEnv = process.env,
+): boolean | undefined {
+  const raw = env.WECHAT_THOUGHTFUL_ACK?.trim().toLowerCase();
+  if (raw === "0" || raw === "false" || raw === "no") return false;
+  if (raw === "1" || raw === "true") return true;
+  if (raw) return true;
+  return undefined;
+}
+
+export function resolveThoughtfulAckDelayMs(
+  env: NodeJS.ProcessEnv = process.env,
+): number {
+  const raw = env.WECHAT_THOUGHTFUL_ACK_DELAY_MS?.trim();
+  if (raw) {
+    const n = Number(raw);
+    if (!Number.isNaN(n) && n >= 0) return n;
+  }
+  return 15_000;
+}
+
+export function resolveThoughtfulReflect(
+  env: NodeJS.ProcessEnv = process.env,
+): boolean | undefined {
+  const raw = env.WECHAT_THOUGHTFUL_REFLECT?.trim().toLowerCase();
+  if (raw === "1" || raw === "true" || raw === "yes") return true;
+  if (raw === "0" || raw === "false" || raw === "no") return false;
+  return undefined;
+}
+
+// ── escalation gate ────────────────────────────────────────
+
+export function resolveUnifiedGateLlm(
+  env: NodeJS.ProcessEnv = process.env,
+): boolean | undefined {
+  const raw = env.WECHAT_UNIFIED_GATE_LLM?.trim().toLowerCase();
+  if (raw === "0" || raw === "false" || raw === "no") return false;
+  if (raw === "1" || raw === "true" || raw === "yes") return true;
+  return undefined;
+}

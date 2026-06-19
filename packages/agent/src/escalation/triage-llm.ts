@@ -1,12 +1,10 @@
 import type { ChatEscalationState, GateAction } from "./types.js";
 import { formatTranscriptForGate } from "../transcript-context.js";
 import type { TranscriptEntry } from "../transcript.js";
+import { resolveTriageLlmConfig } from "../effective-config.js";
+import type { LlmApiConfig } from "../effective-config.js";
 
-export type TriageLlmConfig = {
-  apiUrl: string;
-  apiKey: string;
-  model: string;
-};
+export type TriageLlmConfig = LlmApiConfig;
 
 const TRIAGE_SYSTEM = `你是微信私聊客服的「统一分流器」，不是客服本人。
 只输出一行 JSON，不要 markdown，不要解释：
@@ -22,28 +20,7 @@ const TRIAGE_SYSTEM = `你是微信私聊客服的「统一分流器」，不是
 confidence：对 action 把握程度，0 极不确定，1 极确定。`;
 
 export function loadTriageLlmConfig(): TriageLlmConfig | undefined {
-  if (process.env.WECHAT_TRIAGE_LLM_ENABLED === "false") return undefined;
-
-  const apiKey =
-    process.env.WECHAT_TRIAGE_API_KEY?.trim() ||
-    process.env.TDAI_LLM_API_KEY?.trim() ||
-    process.env.XIAOMI_TOKEN_PLAN_CN_API_KEY?.trim();
-  if (!apiKey) return undefined;
-
-  const apiUrl = (
-    process.env.WECHAT_TRIAGE_API_URL?.trim() ||
-    process.env.TDAI_LLM_BASE_URL?.trim() ||
-    process.env.XIAOMI_API_BASE?.trim() ||
-    "https://token-plan-cn.xiaomimimo.com/v1"
-  ).replace(/\/$/, "");
-
-  const model =
-    process.env.WECHAT_TRIAGE_MODEL?.trim() ||
-    process.env.TDAI_LLM_MODEL?.trim() ||
-    process.env.PI_MODEL?.trim() ||
-    "deepseek-chat";
-
-  return { apiUrl, apiKey, model };
+  return resolveTriageLlmConfig();
 }
 
 type LlmTriagePayload = {
