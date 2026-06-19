@@ -1,5 +1,6 @@
 import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { resolveBurstDelayMs } from "./effective-config.js";
 
 export type GroupMode = "bot" | "member";
 
@@ -204,11 +205,8 @@ export function initChatStyle(stylePath: string): ChatStyle {
     maxSendsPerTurn: SERVICE_STYLE_DEFAULTS.maxSendsPerTurn,
     thoughtfulAck: true,
   });
-  const globalBurst = process.env.WECHAT_PI_BURST_DELAY_MS;
-  if (globalBurst) {
-    const n = Number(globalBurst);
-    if (!Number.isNaN(n)) style.burstDelayMs = n;
-  }
+  const globalBurst = resolveBurstDelayMs();
+  if (globalBurst !== undefined) style.burstDelayMs = globalBurst;
   writeFileSync(stylePath, JSON.stringify(style, null, 2) + "\n", "utf8");
   return style;
 }

@@ -8,7 +8,8 @@ import {
 import { isMentionableDisplayName, resolveForReply } from "./mention-names.js";
 
 export type { GroupConfig, GroupPolicy } from "./group-config.js";
-export { loadGroupConfig, policyFor } from "./group-config.js";
+export { resolveGroupConfig } from "./effective-config.js";
+export { policyFor } from "./group-config.js";
 
 /** @ mention segments from inbound messages. */
 export type MentionSegment = {

@@ -23,19 +23,7 @@ pub async fn vnc_ws(ws: WebSocketUpgrade) -> impl IntoResponse {
 async fn handle_vnc_ws(ws: WebSocket, websockify_port: u16) {
     let ws_url = format!("ws://127.0.0.1:{websockify_port}/websockify");
 
-    let req = match http::Request::builder()
-        .uri(&ws_url)
-        .header("Sec-WebSocket-Protocol", "binary")
-        .body(())
-    {
-        Ok(r) => r,
-        Err(e) => {
-            tracing::error!("Failed to build websockify request: {e}");
-            return;
-        }
-    };
-
-    let (upstream, _) = match tokio_tungstenite::connect_async(req).await {
+    let (upstream, _) = match tokio_tungstenite::connect_async(&ws_url).await {
         Ok(s) => s,
         Err(e) => {
             tracing::error!("WebSocket connection to websockify failed: {e}");

@@ -4,7 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, test } from "node:test";
 import { loadConfig } from "./config.js";
-import { loadGroupConfig, policyFor } from "./group-config.js";
+import { resolveGroupConfig } from "./effective-config.js";
+import { policyFor } from "./group-config.js";
 import { createMemoryClient } from "./memory-client.js";
 import { encodeChatDir } from "./paths.js";
 
@@ -48,18 +49,18 @@ describe("agent smoke", () => {
     assert.equal(encodeChatDir("wxid_abc"), "_wxid_abc");
   });
 
-  test("loadGroupConfig applies default mention policy", () => {
+  test("resolveGroupConfig applies default mention policy", () => {
     delete process.env.BRIDGE_REQUIRE_MENTION;
     delete process.env.BRIDGE_REPLY_WITH_MENTION;
     delete process.env.BRIDGE_GROUPS_CONFIG;
 
-    const config = loadGroupConfig();
+    const config = resolveGroupConfig();
     assert.equal(config.defaultPolicy.requireMention, true);
     assert.equal(config.defaultPolicy.replyWithMention, "none");
     assert.equal(config.groupHistoryLimit, 50);
   });
 
-  test('loadGroupConfig treats JSON string "none" as none not trigger', () => {
+  test('resolveGroupConfig treats JSON string "none" as none not trigger', () => {
     const dir = mkdtempSync(join(tmpdir(), "bridge-groups-"));
     const path = join(dir, "bridge-groups.json");
     writeFileSync(
@@ -71,12 +72,12 @@ describe("agent smoke", () => {
     process.env.BRIDGE_GROUPS_CONFIG = path;
     delete process.env.BRIDGE_REPLY_WITH_MENTION;
 
-    const config = loadGroupConfig();
+    const config = resolveGroupConfig();
     assert.equal(config.defaultPolicy.replyWithMention, "none");
   });
 
   test("policyFor falls back to default policy for unknown chats", () => {
-    const config = loadGroupConfig();
+    const config = resolveGroupConfig();
     const policy = policyFor(config, "missing@chatroom");
     assert.deepEqual(policy, config.defaultPolicy);
   });

@@ -1,10 +1,22 @@
 import { readAuthToken } from "@cococat/shared";
-import { loadGroupConfig, type GroupConfig } from "./group-config.js";
 import { WikiClient } from "./wiki-client.js";
 import { createMemoryClient, type MemoryClient } from "./memory-client.js";
 import { MemoryHealthMonitor } from "./memory-health.js";
 import { isQueueEnabled } from "./queue/redis.js";
-import { resolvePollFallbackMs } from "./effective-config.js";
+import {
+  resolvePollFallbackMs,
+  resolveServerUrl,
+  resolveProvider,
+  resolveModel,
+  resolveSystemPrompt,
+  resolveHistoryLimit,
+  resolveWikiEnabled,
+  resolveWikiApiUrl,
+  resolveWikiApiToken,
+  resolveWikiProjectId,
+  resolveGroupConfig,
+} from "./effective-config.js";
+import type { GroupConfig } from "./group-config.js";
 
 export type PiWeChatConfig = {
   serverUrl: string;
@@ -23,10 +35,6 @@ export type PiWeChatConfig = {
 };
 
 export function loadConfig(): PiWeChatConfig {
-  const serverUrl =
-    process.env.AGENT_WECHAT_URL ??
-    process.env.WECHAT_SERVER_URL ??
-    "http://localhost:6174";
   const token = readAuthToken() ?? "";
 
   if (!token) {
@@ -35,36 +43,26 @@ export function loadConfig(): PiWeChatConfig {
     );
   }
 
-  const group = loadGroupConfig();
-  const wikiEnabled =
-    process.env.WIKI_ENABLED === "true" || process.env.WIKI_ENABLED === "1";
-  const wikiApiUrl = process.env.WIKI_API_URL ?? "http://127.0.0.1:19828";
-  const wikiApiToken = process.env.WIKI_API_TOKEN ?? "";
-  const wikiDefaultProject = process.env.WIKI_PROJECT_ID?.trim();
-
-  let wikiClient: WikiClient | undefined;
-  if (wikiEnabled) {
-    wikiClient = new WikiClient({
-      apiUrl: wikiApiUrl.replace(/\/$/, ""),
-      apiToken: wikiApiToken,
-      defaultProjectId: wikiDefaultProject,
-    });
-  }
+  const wikiEnabled = resolveWikiEnabled();
+  const wikiClient = wikiEnabled
+    ? new WikiClient({
+        apiUrl: resolveWikiApiUrl(),
+        apiToken: resolveWikiApiToken(),
+        defaultProjectId: resolveWikiProjectId(),
+      })
+    : undefined;
 
   const memoryClient = createMemoryClient();
 
   return {
-    serverUrl,
+    serverUrl: resolveServerUrl(),
     token,
-    provider: process.env.PI_PROVIDER ?? process.env.LLM_PROVIDER ?? "anthropic",
-    model:
-      process.env.PI_MODEL ??
-      process.env.LLM_MODEL ??
-      "claude-sonnet-4-20250514",
-    systemPrompt: process.env.WECHAT_PI_SYSTEM_PROMPT,
+    provider: resolveProvider(),
+    model: resolveModel(),
+    systemPrompt: resolveSystemPrompt(),
     pollFallbackMs: resolvePollFallbackMs(),
-    historyLimit: Number(process.env.WECHAT_PI_HISTORY_LIMIT ?? "40"),
-    group,
+    historyLimit: resolveHistoryLimit(),
+    group: resolveGroupConfig(),
     wikiEnabled,
     wikiClient,
     memoryClient,
