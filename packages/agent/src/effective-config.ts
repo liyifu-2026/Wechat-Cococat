@@ -13,6 +13,7 @@ const DEFAULT_MODEL = "claude-sonnet-4-20250514";
 const DEFAULT_HISTORY_LIMIT = 40;
 const DEFAULT_GROUP_HISTORY_LIMIT = 50;
 const DEFAULT_WIKI_API_URL = "http://127.0.0.1:19828";
+const DEFAULT_LLM_API_MODEL = "mimo-v2-omni";
 
 // ── helpers ────────────────────────────────────────────────
 
@@ -260,7 +261,7 @@ function resolveLlmApiConfig(
     env[opts.modelKey]?.trim() ||
     env.TDAI_LLM_MODEL?.trim() ||
     env.PI_MODEL?.trim() ||
-    "deepseek-chat";
+    DEFAULT_LLM_API_MODEL;
 
   return { apiUrl, apiKey, model };
 }

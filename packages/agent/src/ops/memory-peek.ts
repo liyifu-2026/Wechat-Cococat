@@ -5,7 +5,7 @@ import { loadChatProfile } from "../chat-profile.js";
 import { listActiveMutes } from "../escalation/state-store.js";
 import type { MemoryCandidate } from "../escalation/types.js";
 import type { MemoryClient } from "../memory-client.js";
-import { readPersonaMemorySection } from "../persona.js";
+import { readChatPersonaRaw } from "../persona.js";
 import { listKnownChatIds } from "../reconcile-transcript.js";
 import { loadTranscript } from "../transcript.js";
 import { clampOpsReply } from "./wiki-sniff.js";
@@ -178,7 +178,7 @@ export async function formatMemorySnapshot(
 ): Promise<string> {
   const ctx = ensureChatContext(candidate.chatId);
   const gateway = await memoryClient.recallForOps(candidate.chatId);
-  const personaMem = readPersonaMemorySection(ctx.personaPath);
+  const personaRaw = readChatPersonaRaw(ctx.personaPath);
 
   const blocks: string[] = [
     `【记忆 · ${candidate.chatName}】`,
@@ -187,8 +187,8 @@ export async function formatMemorySnapshot(
     "--- Gateway ---",
     gateway ? clipRecallLines(gateway) : "(无)",
     "",
-    "--- 相处记忆 ---",
-    personaMem.trim() || "(无)",
+    "--- persona.md ---",
+    personaRaw || "(无)",
   ];
 
   appendConsoleEvent({

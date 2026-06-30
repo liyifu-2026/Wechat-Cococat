@@ -197,6 +197,7 @@ export function LlmConfigView({ embedded = false }: LlmConfigViewProps) {
           <StackAssignmentPanel
             stack={stack}
             providerConfigs={localConfigs}
+            llmConfig={llmConfig}
             dirty={dirty}
             onChangeStack={setStack}
             onGoProviders={() => setTab("providers")}

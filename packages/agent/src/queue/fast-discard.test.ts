@@ -1,5 +1,8 @@
-import { describe, it } from "node:test";
+import { afterEach, beforeEach, describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { Message, WeChatClient } from "@cococat/shared";
 import { recordAutoReply } from "../reply-guard.js";
 import { evaluateInboundFastDiscard } from "./fast-discard.js";
@@ -18,8 +21,41 @@ const defaultGroup: GroupConfig = {
   groupHistoryLimit: 50,
 };
 
-describe("fast-discard", () => {
-  it("discards on cooling down when not mentioned", async () => {
+const prevData = process.env.COCOCAT_DATA_DIR;
+
+describe("fast-discard", { concurrency: false }, () => {
+  beforeEach(() => {
+    process.env.COCOCAT_DATA_DIR = mkdtempSync(
+      join(tmpdir(), "cococat-fast-discard-"),
+    );
+  });
+
+  afterEach(() => {
+    if (prevData === undefined) delete process.env.COCOCAT_DATA_DIR;
+    else process.env.COCOCAT_DATA_DIR = prevData;
+  });
+
+  it("fast-discards official account messages", async () => {
+    const chatId = "gh_example_official";
+    const messages = [
+      { localId: 4, isSelf: false, content: "公众号推送" },
+    ] as Message[];
+
+    const result = await evaluateInboundFastDiscard({
+      client: mockClient(messages),
+      group: defaultGroup,
+      groupBuffers: new Map(),
+      chatId,
+      chatName: "公众号",
+      isGroup: false,
+      snapshotLocalIds: [4],
+    });
+
+    assert.equal(result?.reason, "official_account");
+    assert.deepEqual(result?.localIds, [4]);
+  });
+
+  it("does not fast-discard on cooling down when not mentioned", async () => {
     const chatId = "fast-discard-cool@test";
     recordAutoReply(chatId);
 
@@ -37,8 +73,7 @@ describe("fast-discard", () => {
       snapshotLocalIds: [10],
     });
 
-    assert.equal(result?.reason, "cooling_down");
-    assert.deepEqual(result?.localIds, [10]);
+    assert.equal(result, undefined);
   });
 
   it("buffers group messages without mention", async () => {

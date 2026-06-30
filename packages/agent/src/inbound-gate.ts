@@ -18,11 +18,13 @@ import {
 
 export type InboundGateDiscardReason =
   | ReplySkipReason
+  | "official_account"
   | "group_buffer"
   | "muted_customer"
   | "agent_proxy_off"
   | "triage_done"
-  | "memory_unavailable";
+  | "memory_unavailable"
+  | "cooling_down_deferred";
 
 export type InboundGateDiscard = {
   action: "discard";
@@ -55,8 +57,12 @@ export type InboundGateParams = {
   memoryHealth?: MemoryHealthMonitor;
   transcriptEntries: TranscriptEntry[];
   mode: "fast" | "full";
-  skipReplyGuard?: boolean;
 };
+
+/** WeChat official/service accounts use `gh_` usernames. They are read-only for Agent auto-reply. */
+export function isOfficialAccountChat(chatId: string): boolean {
+  return chatId.startsWith("gh_");
+}
 
 /**
  * Shared inbound gate for sync and queue paths.
@@ -77,13 +83,21 @@ export async function evaluateInboundGate(
     memoryHealth,
     transcriptEntries,
     mode,
-    skipReplyGuard,
   } = params;
 
   const isGroupChat = isGroup || chatId.includes("@chatroom");
   const isPrivateService = !isGroupChat && isServicePersona(chatCtx.style);
   const isMaintainerChannel =
     !isGroupChat && Boolean(escalation?.isMaintainerChat(chatId));
+
+  if (!isGroupChat && isOfficialAccountChat(chatId)) {
+    return {
+      action: "discard",
+      reason: "official_account",
+      unseen: initialUnseen,
+      shouldMarkSeen: true,
+    };
+  }
 
   if (
     !isGroupChat &&
@@ -166,20 +180,32 @@ export async function evaluateInboundGate(
     lastTriageConfidence = triageOutcome.confidence;
   }
 
-  if (!skipReplyGuard) {
-    const skipReason = evaluateReplySkip({
-      chatId,
-      cooldownMs: replyCooldownMs(chatCtx.style.replyCooldownMs),
-      wasMentioned,
-    });
-    if (skipReason) {
+  const skipReason = evaluateReplySkip({
+    chatId,
+    cooldownMs: replyCooldownMs(chatCtx.style.replyCooldownMs),
+    wasMentioned,
+  });
+  if (skipReason === "cooling_down") {
+    // Fast path: defer to full path — fast-discard will see this reason and
+    // return undefined (let processUnseen's full-mode gate re-evaluate).
+    if (mode === "fast") {
       return {
         action: "discard",
-        reason: skipReason,
+        reason: "cooling_down_deferred",
         unseen,
-        shouldMarkSeen: true,
+        shouldMarkSeen: false,
       };
     }
+    // Full path: discard now. Private service persona skips markSeen so the
+    // message re-enters the unseen queue on next poll (preserves the old
+    // inline-guard behavior from session.ts:838-844).
+    const shouldMarkSeen = !isPrivateService;
+    return {
+      action: "discard",
+      reason: "cooling_down",
+      unseen,
+      shouldMarkSeen,
+    };
   }
 
   return {

@@ -3,9 +3,7 @@ use crate::db::{get_db, queries};
 use crate::ia::actions;
 use crate::ia::types::*;
 use crate::tools::wechat_db::{find_account_dir, find_wechat_pid};
-use crate::tools::wechat_keys::{
-    extract_keys_async, get_stored_keys, mark_unopenable_shards, needs_key_extraction, store_keys,
-};
+use crate::tools::wechat_keys::needs_key_extraction;
 use rusqlite::params;
 
 pub struct LoginPlan;
@@ -389,29 +387,10 @@ async fn handle_extracting_keys(
     session_id: &str,
     frame: Option<FrameHint>,
 ) -> Option<SelectedAction> {
-    let wechat_pid: Option<i64> = {
-        let db = get_db();
-        db.query_row(
-            "SELECT wechat_pid FROM sessions WHERE id = ?1",
-            params![session_id],
-            |row| row.get(0),
-        )
-        .ok()
-        .flatten()
-        .or_else(|| find_wechat_pid())
-    };
-
-    if let (Some(pid), Some(acct)) = (wechat_pid, plan_state.account_dir.clone()) {
-        let extracted = extract_keys_async(pid).await;
-        {
-            let db = get_db();
-            if !extracted.is_empty() {
-                store_keys(&db, session_id, &acct, &extracted);
-            } else {
-                tracing::error!("[login] Key extraction failed");
-            }
-            let keys = get_stored_keys(&db, session_id, &acct);
-            mark_unopenable_shards(&db, session_id, &acct, &keys);
+    if let Some(acct) = plan_state.account_dir.clone() {
+        let snapshot = crate::keystore::force_extract_keys(session_id, &acct).await;
+        if snapshot.keys.is_empty() {
+            tracing::error!("[login] Key extraction failed for {acct}");
         }
     }
 

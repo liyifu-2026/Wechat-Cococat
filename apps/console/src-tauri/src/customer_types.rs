@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
 
-use crate::agent_config::{cococat_config_dir, ensure_parent};
+use crate::paths::{cococat_config_dir, ensure_parent};
 
 const CUSTOMER_TYPES_FILE: &str = "customer-types.json";
 

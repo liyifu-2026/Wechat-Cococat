@@ -31,6 +31,34 @@ describe("multimodalConfigFromWikiIngestRole", () => {
     expect(mm.model).toBe("mimo-v2-omni");
   });
 
+  it("inherit override materializes xiaomi wiki ingest caption config", () => {
+    const stack = defaultLlmStack("xiaomi-mimo", "mimo-v2-omni");
+    stack.roles.wikiIngestCaption = {
+      mode: "inherit",
+      inheritFrom: "chat",
+      modelOverride: "mimo-v2.5",
+      enabled: true,
+    };
+
+    const mm = multimodalConfigFromWikiIngestRole(
+      stack,
+      {
+        "xiaomi-mimo": {
+          apiKey: "test-key",
+          baseUrl: "https://token-plan-cn.xiaomimimo.com/v1",
+        },
+      },
+      fallback,
+    );
+
+    expect(mm.enabled).toBe(true);
+    expect(mm.useMainLlm).toBe(false);
+    expect(mm.provider).toBe("custom");
+    expect(mm.model).toBe("mimo-v2.5");
+    expect(mm.apiKey).toBe("test-key");
+    expect(mm.customEndpoint).toBe("https://token-plan-cn.xiaomimimo.com/v1");
+  });
+
   it("custom wiki ingest maps dedicated endpoint", () => {
     const stack = defaultLlmStack("xiaomi-mimo", "mimo-v2.5-pro");
     stack.roles.wikiIngestCaption = {

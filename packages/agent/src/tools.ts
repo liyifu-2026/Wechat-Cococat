@@ -7,6 +7,7 @@ import { humanizeReplyText } from "./humanize.js";
 import { stripLeadingAtMentions } from "./mention-names.js";
 import { resolveSendImagePayload } from "./send-image.js";
 import { prepareServiceOutboundText } from "./stealth-send.js";
+import { sendWeChatSafely } from "./outbound-safety.js";
 import type { DelayRange } from "./style.js";
 
 export const WECHAT_OUTBOUND_TOOL_NAMES = new Set([
@@ -125,7 +126,7 @@ export function createWeChatTools(ctx: WeChatToolContext): AgentTool[] {
 
       await retrySend(
         () =>
-          ctx.client.sendMessage({
+          sendWeChatSafely(ctx.client, {
             chatId: ctx.chatId,
             text: body,
             mentions: mentionsForSend,
@@ -172,7 +173,7 @@ export function createWeChatTools(ctx: WeChatToolContext): AgentTool[] {
 
       await retrySend(
         () =>
-          ctx.client.sendMessage({
+          sendWeChatSafely(ctx.client, {
             chatId: ctx.chatId,
             image: { data: payload.data, mimeType: payload.mimeType },
           }),

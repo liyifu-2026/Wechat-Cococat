@@ -14,6 +14,7 @@ const DRIVER_TIMEOUT: Duration = Duration::from_secs(30);
 
 static DRIVER_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
     reqwest::Client::builder()
+        .no_proxy()
         .tcp_nodelay(true)
         .timeout(DRIVER_TIMEOUT)
         .build()

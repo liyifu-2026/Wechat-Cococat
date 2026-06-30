@@ -6,14 +6,11 @@ use crate::db::get_db;
 use crate::db::queries;
 use crate::ia::types::Session;
 use crate::sessions::manager::get_session;
-use crate::tools::wechat_db::{find_wechat_pid, get_db_path, resolve_account_dir};
-use crate::tools::wechat_keys::{
-    extract_keys_async, get_image_keys, get_stored_keys, mark_unopenable_shards,
-    needs_key_extraction, store_keys, verify_key,
+use crate::tools::wechat_db::{
+    find_account_dir, find_wechat_pid, get_db_path, resolve_account_dir,
 };
+use crate::tools::wechat_keys::{get_stored_keys, verify_key};
 
-static EXTRACT_COOLDOWN: Duration = Duration::from_secs(120);
-static LAST_EXTRACT: OnceLock<Mutex<HashMap<String, Instant>>> = OnceLock::new();
 static SESSION_CTX_TTL: Duration = Duration::from_secs(5);
 static SESSION_CTX_CACHE: OnceLock<Mutex<Option<CachedSessionCtx>>> = OnceLock::new();
 
@@ -23,24 +20,6 @@ struct CachedSessionCtx {
     session_id: String,
     logged_in_user: Option<String>,
     ctx: SessionCtx,
-}
-
-fn extract_on_cooldown(account_dir: &str) -> bool {
-    let guard = LAST_EXTRACT
-        .get_or_init(|| Mutex::new(HashMap::new()))
-        .lock()
-        .unwrap();
-    guard
-        .get(account_dir)
-        .is_some_and(|t| t.elapsed() < EXTRACT_COOLDOWN)
-}
-
-fn mark_extracted(account_dir: &str) {
-    let mut guard = LAST_EXTRACT
-        .get_or_init(|| Mutex::new(HashMap::new()))
-        .lock()
-        .unwrap();
-    guard.insert(account_dir.to_string(), Instant::now());
 }
 
 #[derive(Clone)]
@@ -104,50 +83,31 @@ impl SessionCtx {
         if let Some(ctx) = cached_session_ctx(&session) {
             return Ok(ctx);
         }
-        let stored = session.logged_in_user.as_deref().ok_or("not logged in")?;
+        let mut stored_owned: Option<String> = None;
+        let stored = session
+            .logged_in_user
+            .as_deref()
+            .or_else(|| {
+                // Auto-detect if not yet known (container restart, etc.)
+                if let Some(dir) = find_wechat_pid().and_then(find_account_dir) {
+                    tracing::info!("[session-ctx] auto-detected account_dir={dir} (was None)");
+                    let db = get_db();
+                    queries::update_session_logged_in_user(&db, &session.id, Some(&dir));
+                    stored_owned = Some(dir);
+                    stored_owned.as_deref()
+                } else {
+                    None
+                }
+            })
+            .ok_or("not logged in")?;
         let account_dir = resolve_account_dir(stored)
             .ok_or_else(|| format!("cannot resolve account dir for {stored}"))?;
         heal_logged_in_user(&session, &account_dir);
 
         let session_id = session.id.clone();
-        {
-            let db = get_db();
-            let stored = get_stored_keys(&db, &session_id, &account_dir);
-            mark_unopenable_shards(&db, &session_id, &account_dir, &stored);
-        }
-
-        let needs_extract = !extract_on_cooldown(&account_dir) && {
-            let db = get_db();
-            needs_key_extraction(&db, &session_id, &account_dir)
-        };
-
-        if needs_extract {
-            tracing::info!(
-                "[session-ctx] Missing or stale keys for {}, re-extracting...",
-                account_dir
-            );
-            if let Some(pid) = find_wechat_pid() {
-                let extracted = extract_keys_async(pid).await;
-                if !extracted.is_empty() {
-                    let db = get_db();
-                    store_keys(&db, &session_id, &account_dir, &extracted);
-                    mark_extracted(&account_dir);
-                }
-            }
-            let db = get_db();
-            let keys = get_stored_keys(&db, &session_id, &account_dir);
-            mark_unopenable_shards(&db, &session_id, &account_dir, &keys);
-        }
-
-        let keys = {
-            let db = get_db();
-            get_stored_keys(&db, &session_id, &account_dir)
-        };
-
-        let image_keys = {
-            let db = get_db();
-            get_image_keys(&db, &session_id, &account_dir)
-        };
+        let snapshot = crate::keystore::ensure_keys(&session_id, &account_dir).await;
+        let keys = snapshot.keys;
+        let image_keys = snapshot.image_keys;
 
         let ctx = Self {
             session,

@@ -71,6 +71,10 @@ export async function evaluateInboundFastDiscard(params: {
   });
 
   if (gate.action === "discard") {
+    // Fast path defers cooling_down to the full path. The gate explicitly
+    // signals this via `cooling_down_deferred` (mode:"fast" only). Any other
+    // discard reason is a real fast-discard.
+    if (gate.reason === "cooling_down_deferred") return undefined;
     return {
       reason: gate.reason,
       localIds: gate.unseen.map((m) => m.localId),

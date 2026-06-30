@@ -1,12 +1,7 @@
 use std::path::{Path, PathBuf};
 
+use crate::paths::{cococat_config_dir, home_dir};
 use crate::stack_orchestrator;
-
-fn home_dir() -> PathBuf {
-    std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("."))
-}
 
 fn repo_root() -> PathBuf {
     if let Ok(root) = std::env::var("COCOCAT_REPO_ROOT") {
@@ -16,13 +11,6 @@ fn repo_root() -> PathBuf {
         .join("../../..")
         .canonicalize()
         .unwrap_or_else(|_| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../.."))
-}
-
-fn cococat_config_dir() -> PathBuf {
-    if let Ok(dir) = std::env::var("COCOCAT_CONFIG_DIR") {
-        return PathBuf::from(dir);
-    }
-    home_dir().join(".config/cococat")
 }
 
 fn read_token_from(path: &Path) -> Option<String> {

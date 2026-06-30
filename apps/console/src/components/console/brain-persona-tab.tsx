@@ -4,7 +4,6 @@ import { useTranslation } from "react-i18next"
 import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
 import { readConfigFile, writeConfigFile } from "@/lib/agent-config-client"
-import { checkStealthText } from "@/lib/stealth-check"
 
 export function BrainPersonaTab() {
   const { t } = useTranslation()
@@ -43,8 +42,6 @@ export function BrainPersonaTab() {
     }
   }
 
-  const draftStealth = checkStealthText(persona)
-
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-auto px-6 py-4">
       {message && (
@@ -53,14 +50,6 @@ export function BrainPersonaTab() {
       {error && (
         <div className="mb-3 rounded-md border border-destructive/40 px-4 py-3 text-sm text-destructive">
           {error}
-        </div>
-      )}
-
-      {!draftStealth.ok && persona.trim() && (
-        <div className="mb-4 rounded-md border border-destructive/40 bg-destructive/5 px-4 py-3 text-sm text-destructive">
-          {t("console.brain.stealthDraftFail", {
-            hits: draftStealth.hits.join("、"),
-          })}
         </div>
       )}
 

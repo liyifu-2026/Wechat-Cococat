@@ -1,5 +1,6 @@
 import type { Message, WeChatClient } from "@cococat/shared";
 import { appendConsoleEvent } from "../console-events.js";
+import { sendWeChatSafely } from "../outbound-safety.js";
 import {
   loadEscalationConfigCached,
   maintainerIdentity,
@@ -191,7 +192,7 @@ export class EscalationService {
 
   async sendText(chatId: string, text: string): Promise<void> {
     await enqueueSend(async () => {
-      await this.client.sendMessage({ chatId, text });
+      await sendWeChatSafely(this.client, { chatId, text });
     });
   }
 

@@ -76,6 +76,19 @@ BUILD_PROFILES = {
         "VEC_KEY_OFF": 0x168,
         "VEC_MAP_OFF": 0xe8,
     },
+    # WeChat Linux 4.x x86_64 (BuildID: 7b3f07cc...) — 2026-06 update
+    "7b3f07cc": {
+        "ARCH": "x86_64",
+        "SELECT_SESSION": 0x3988e60,
+        "USERNAME_OFF": 0x120,
+        "ELEM_SIZE": 16,
+        "MANAGER_VT_OFF": 0x8197d10,
+        "CTRL_OFF": 0x180,
+        "CUR_SESS_OFF": 0x40,
+        "CUR_SESS_UNAME_OFF": 0x98,
+        "VEC_KEY_OFF": 0x168,
+        "VEC_MAP_OFF": 0xe8,
+    },
 }
 
 FRIDA_BIN = shutil.which("frida") or "/usr/local/bin/frida"

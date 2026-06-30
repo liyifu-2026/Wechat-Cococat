@@ -44,7 +44,9 @@ fn run_caption_script(audio_data_url: &str) -> Result<CaptionInboxVoiceResult, S
             "COCOCAT_REPO_ROOT",
             stack::monorepo_root().to_string_lossy().to_string(),
         )
-        .env("PATH", stack::node_path_env());
+        .env("PATH", stack::node_path_env())
+        .env("NO_PROXY", "localhost,127.0.0.0/8")
+        .env("no_proxy", "localhost,127.0.0.0/8");
 
     if let Ok(dir) = std::env::var("COCOCAT_CONFIG_DIR") {
         cmd.env("COCOCAT_CONFIG_DIR", dir);

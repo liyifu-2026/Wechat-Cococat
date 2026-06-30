@@ -28,7 +28,33 @@ afterEach(() => {
 });
 
 describe("inbound-gate", { concurrency: false }, () => {
-  it("fast mode discards on cooling down when not mentioned", async () => {
+  it("discards official account private chats before auto-reply", async () => {
+    const chatId = "gh_example_official";
+    const chatCtx = ensureChatContext(chatId);
+    const unseen = [
+      { localId: 3, isSelf: false, content: "公众号推送" },
+    ] as Message[];
+
+    const result = await evaluateInboundGate({
+      chatId,
+      chatName: "公众号",
+      isGroup: false,
+      unseen,
+      group: defaultGroup,
+      groupBuffers: new Map(),
+      chatCtx,
+      transcriptEntries: [],
+      mode: "full",
+    });
+
+    assert.equal(result.action, "discard");
+    if (result.action === "discard") {
+      assert.equal(result.reason, "official_account");
+      assert.equal(result.shouldMarkSeen, true);
+    }
+  });
+
+  it("fast mode defers cooling down when not mentioned", async () => {
     const chatId = "gate-cool@test";
     recordAutoReply(chatId);
     const chatCtx = ensureChatContext(chatId);
@@ -49,7 +75,10 @@ describe("inbound-gate", { concurrency: false }, () => {
 
     assert.equal(result.action, "discard");
     if (result.action === "discard") {
-      assert.equal(result.reason, "cooling_down");
+      // Fast mode defers to full path — fast-discard sees this and returns
+      // undefined (lets processUnseen's full-mode gate re-evaluate).
+      assert.equal(result.reason, "cooling_down_deferred");
+      assert.equal(result.shouldMarkSeen, false);
     }
   });
 
@@ -112,7 +141,6 @@ describe("inbound-gate", { concurrency: false }, () => {
       chatCtx,
       transcriptEntries: [],
       mode: "full",
-      skipReplyGuard: true,
     });
 
     assert.equal(result.action, "proceed");
@@ -172,7 +200,6 @@ describe("inbound-gate", { concurrency: false }, () => {
       chatCtx,
       transcriptEntries: [],
       mode: "full",
-      skipReplyGuard: true,
     });
 
     assert.equal(result.action, "discard");

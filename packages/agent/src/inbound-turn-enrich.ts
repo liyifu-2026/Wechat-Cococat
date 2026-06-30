@@ -129,6 +129,7 @@ export async function prepareInboundMemoryContext(params: {
   }
 
   pendingSystemRef.current = buildSystemPrompt({
+    chatId: chatCtx.chatId,
     chatName,
     isGroup: isGroupChat,
     personaPath: chatCtx.personaPath,

@@ -9,6 +9,7 @@ import {
   resolveThoughtfulAckFlag,
   resolveThoughtfulAckDelayMs,
 } from "./effective-config.js";
+import { sendWeChatSafely } from "./outbound-safety.js";
 
 const DEFAULT_SERVICE_ACK_PHRASES = [
   "稍等",
@@ -139,7 +140,7 @@ export function startDelayedThoughtfulAck(params: {
       const text = pickThoughtfulAckPhrase(params.chatId, params.style);
       if (!text) return;
 
-      await params.client.sendMessage({ chatId: params.chatId, text });
+      await sendWeChatSafely(params.client, { chatId: params.chatId, text });
       recordThoughtfulAckSent(params.chatId, text);
       params.ackLineRef.current = text;
 

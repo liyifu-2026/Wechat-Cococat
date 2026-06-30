@@ -184,6 +184,8 @@ fn spawn_worker_locked(state: &mut AgentWorkerState) -> Result<(), String> {
         .env("COCOCAT_REPO_ROOT", repo.to_string_lossy().to_string())
         .env("COCOCAT_WIKI_INTERNAL", "1")
         .env("PATH", stack::node_path_env())
+        .env("NO_PROXY", "localhost,127.0.0.0/8")
+        .env("no_proxy", "localhost,127.0.0.0/8")
         .spawn()
         .map_err(|e| format!("Failed to spawn Agent worker ({node}): {e}"))?;
 

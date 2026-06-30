@@ -134,6 +134,7 @@ export async function persistLlmStack(
   if (triage?.enabled !== false && triage) {
     const triageMapped = roleMapping(triage, providerConfigs, llmConfig);
     if (triageMapped?.ok) {
+      triagePatch.WECHAT_TRIAGE_LLM_ENABLED = "true";
       triagePatch.WECHAT_TRIAGE_MODEL = triage.model;
       const url = apiUrlForRole(triage, providerConfigs);
       if (url) triagePatch.WECHAT_TRIAGE_API_URL = url;
@@ -152,6 +153,7 @@ export async function persistLlmStack(
     const captionMapped = roleMapping(caption, providerConfigs, llmConfig);
     if (captionMapped?.ok) {
       const capPatch: Record<string, string> = {
+        WECHAT_CAPTION_ENABLED: "true",
         WECHAT_CAPTION_MODEL: caption.model,
       };
       const url = apiUrlForRole(caption, providerConfigs);
@@ -174,13 +176,12 @@ export async function persistLlmStack(
       const url = apiUrlForRole(memory, providerConfigs);
       const key = apiKeyFromMapping(memoryMapped.mapping.envVars);
       const memPatch: Record<string, string> = {
+        TDAI_LLM_PROVIDER:
+          memoryMapped.mapping.envVars.PI_PROVIDER ?? memory.providerId,
         TDAI_LLM_MODEL: memory.model,
       };
       if (url) memPatch.TDAI_LLM_BASE_URL = url;
       if (key) memPatch.TDAI_LLM_API_KEY = key;
-      if (memory.providerId === "deepseek") {
-        memPatch.TDAI_LLM_PROVIDER = "deepseek";
-      }
       memoryEnv = applyAgentEnvVars(memoryEnv, memPatch);
     }
     await writeConfigFile("memory.env", memoryEnv);

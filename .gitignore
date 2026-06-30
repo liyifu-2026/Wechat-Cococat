@@ -66,6 +66,7 @@ __pycache__/
 screenshot.png
 
 # Local-only tooling
+.tools/
 .claude/
 .superpowers/
 AGENTS.md

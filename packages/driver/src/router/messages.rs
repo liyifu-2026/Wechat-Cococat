@@ -183,15 +183,13 @@ pub async fn send_message(Json(input): Json<SendParams>) -> Json<SendResult> {
         });
     }
 
-    if crate::execution::rate_limiter::get_rate_limiter()
-        .lock()
-        .map(|l| l.is_cooling_down())
-        .unwrap_or(false)
-    {
-        return Json(SendResult {
-            success: false,
-            error: Some("WeChat rate limit cooldown active — try again later".to_string()),
-        });
+    if let Ok(mut limiter) = crate::execution::rate_limiter::get_rate_limiter().lock() {
+        if let Err(error) = limiter.check_outbound_allowed(&input.chat_id) {
+            return Json(SendResult {
+                success: false,
+                error: Some(error),
+            });
+        }
     }
 
     let ctx = match SessionCtx::load().await {
@@ -334,6 +332,9 @@ pub async fn send_message(Json(input): Json<SendParams>) -> Json<SendResult> {
     }
 
     if result.success {
+        if let Ok(mut limiter) = crate::execution::rate_limiter::get_rate_limiter().lock() {
+            limiter.record_outbound_success(&chat_id);
+        }
         if let (Some(ref id), Some(ref text)) = (&client_msg_id, &send_text) {
             if !text.trim().is_empty() {
                 client_msg_registry::try_resolve_after_send(

@@ -36,10 +36,6 @@ import {
 import { consumeCaptionDirty } from "./caption-dirty.js";
 import type { EscalationService } from "./escalation/service.js";
 import {
-  evaluateReplySkip,
-  replyCooldownMs,
-} from "./reply-guard.js";
-import {
   createWeChatTools,
   resolveMaxSendsPerTurn,
   WECHAT_OUTBOUND_TOOL_NAMES,
@@ -511,7 +507,6 @@ export class ChatSession {
     chatName: string,
     isGroup: boolean,
     snapshotLocalIds: number[],
-    opts?: { replyGuardChecked?: boolean },
   ): Promise<void> {
     await this.runExclusive(async () => {
       this.seenStore.reload();
@@ -531,7 +526,7 @@ export class ChatSession {
         );
       }
       if (unseen.length === 0) return;
-      await this.processUnseen(chatName, isGroup, unseen, opts);
+      await this.processUnseen(chatName, isGroup, unseen);
     });
   }
 
@@ -556,6 +551,7 @@ export class ChatSession {
       );
 
       this.turn.pendingSystemRef.current = buildSystemPrompt({
+        chatId: this.chatCtx.chatId,
         chatName: params.chatName,
         isGroup: isGroupChat,
         personaPath: this.chatCtx.personaPath,
@@ -744,7 +740,6 @@ export class ChatSession {
     chatName: string,
     isGroup: boolean,
     unseen: Message[],
-    opts?: { replyGuardChecked?: boolean },
   ): Promise<void> {
     this.busy = true;
     try {
@@ -765,7 +760,6 @@ export class ChatSession {
         memoryHealth: this.config.memoryHealth,
         transcriptEntries: loadTranscript(this.chatCtx.transcriptPath),
         mode: "full",
-        skipReplyGuard: true,
       });
 
       if (earlyGate.action === "discard") {
@@ -813,32 +807,6 @@ export class ChatSession {
       }
 
       await this.hydrateTranscript(isGroupChat);
-
-      if (!opts?.replyGuardChecked) {
-        const skipReason = evaluateReplySkip({
-          chatId: this.chatCtx.chatId,
-          cooldownMs: replyCooldownMs(this.chatCtx.style.replyCooldownMs),
-          wasMentioned,
-        });
-        if (skipReason) {
-          console.log(
-            `[pi-wechat] ${chatName}: skip auto reply (${skipReason})`,
-          );
-          appendAgentTrace({
-            chatId: this.chatCtx.chatId,
-            chatName,
-            turnId: createTurnId(
-              this.chatCtx.chatId,
-              unseen.map((m) => m.localId),
-            ),
-            phase: "skip",
-            query: wasMentioned ? "mentioned" : "not_mentioned",
-            detail: skipReason,
-          });
-          this.markSeen(unseen);
-          return;
-        }
-      }
 
       const turnId = createTurnId(
         this.chatCtx.chatId,
@@ -993,9 +961,7 @@ export class SessionManager {
 
     if (forAgent.length === 0) return;
 
-    await this.get(chatId).processSnapshot(chatName, false, forAgent, {
-      replyGuardChecked: true,
-    });
+    await this.get(chatId).processSnapshot(chatName, false, forAgent);
   }
 
   get(chatId: string): ChatSession {

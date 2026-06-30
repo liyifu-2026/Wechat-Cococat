@@ -1225,6 +1225,11 @@
         "colProvider": "Provider",
         "colCaps": "Capabilities",
         "colFile": "File",
+        "configDetails": "On-disk config details",
+        "configDetailsHint": "Key settings grouped by their write target. API keys / tokens are masked.",
+        "configDetailsFoldedHint": "Collapsed",
+        "configUnset": "Not set",
+        "refreshStatus": "Refresh",
         "restartAgent": "Restart Agent",
         "restartOk": "Agent restarted",
         "roles": {

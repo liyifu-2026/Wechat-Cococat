@@ -104,13 +104,9 @@ pub fn apply_proxy_env(config: &ProxyConfig) -> String {
 
     std::env::set_var("HTTP_PROXY", url);
     std::env::set_var("HTTPS_PROXY", url);
-    if config.bypass_local {
-        std::env::set_var("NO_PROXY", DEFAULT_BYPASS_LIST);
-    } else {
-        // Bypass off — clear NO_PROXY so a previously-set value
-        // doesn't leak through.
-        std::env::remove_var("NO_PROXY");
-    }
+    // Always keep localhost out of the proxy to prevent breaking
+    // local services (Driver, Memory, Wiki API, etc.).
+    std::env::set_var("NO_PROXY", DEFAULT_BYPASS_LIST);
     format!(
         "enabled ({}, bypass_local={})",
         redact_url(url),

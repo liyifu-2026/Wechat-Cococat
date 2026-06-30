@@ -236,6 +236,13 @@ BUILD_PROFILES = {
             "7146d19c2fcbfac10f6ed2aa2a4034f4"
         ),
     },
+    # WeChat Linux 4.x x86_64 (BuildID: 7b3f07cc...) — 2026-06 update
+    "7b3f07cc": {
+        "image_xor_mask": bytes.fromhex(
+            "29c63ae609ae3c9826a786367d9a4c3a"
+            "7146d19c2fcbfac10f6ed2aa2a4034f4"
+        ),
+    },
 }
 
 

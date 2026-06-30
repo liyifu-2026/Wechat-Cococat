@@ -6,6 +6,7 @@ pub mod effects;
 pub mod events;
 pub mod execution;
 pub mod ia;
+pub mod keystore;
 pub mod plans;
 pub mod router;
 pub mod sessions;

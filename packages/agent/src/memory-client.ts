@@ -1,4 +1,5 @@
 import { writePersonaMemorySection } from "./persona.js";
+import { filterMemoryTextForSession } from "./memory-session-filter.js";
 
 export type MemoryCaptureTurn = {
   userLines: string[];
@@ -91,8 +92,7 @@ export class MemoryClient {
         },
         this.opts.recallTimeoutMs,
       );
-      const ctx = res.context?.trim();
-      return ctx || undefined;
+      return filterMemoryTextForSession(sessionKey, res.context);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       console.warn(`[pi-wechat] memory ops recall skipped: ${msg}`);
@@ -110,8 +110,13 @@ export class MemoryClient {
         { query: q, session_key: sessionKey },
         this.opts.recallTimeoutMs,
       );
-      const ctx = res.context?.trim();
-      return ctx || undefined;
+      const ctx = filterMemoryTextForSession(sessionKey, res.context);
+      if (!ctx && res.context?.trim()) {
+        console.warn(
+          `[pi-wechat] memory recall dropped for ${sessionKey}: no matching Session marker`,
+        );
+      }
+      return ctx;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       console.warn(`[pi-wechat] memory recall skipped: ${msg}`);
@@ -148,7 +153,13 @@ export class MemoryClient {
         },
         8000,
       );
-      return search.results?.trim() ?? "";
+      const body = filterMemoryTextForSession(sessionKey, search.results) ?? "";
+      if (!body && search.results?.trim()) {
+        console.warn(
+          `[pi-wechat] memory L3 fetch dropped for ${sessionKey}: no matching Session marker`,
+        );
+      }
+      return body;
     } catch (err) {
       console.warn(
         `[pi-wechat] memory L3 fetch failed for ${sessionKey}:`,

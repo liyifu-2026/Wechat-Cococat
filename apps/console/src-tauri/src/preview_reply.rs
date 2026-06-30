@@ -49,7 +49,9 @@ fn run_agent_preview_cold(query: &str, chat_id: Option<&str>) -> Result<PreviewR
             "COCOCAT_REPO_ROOT",
             stack::monorepo_root().to_string_lossy().to_string(),
         )
-        .env("PATH", stack::node_path_env());
+        .env("PATH", stack::node_path_env())
+        .env("NO_PROXY", "localhost,127.0.0.0/8")
+        .env("no_proxy", "localhost,127.0.0.0/8");
 
     if let Some(id) = chat_id {
         let trimmed = id.trim();

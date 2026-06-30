@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { globalPersonaPath } from "./paths.js";
+import { filterMemoryTextForSession } from "./memory-session-filter.js";
 
 const CORE_HEADER = "## 核心性格";
 const MEMORY_HEADER = "## 相处记忆";
@@ -16,23 +17,21 @@ ${MEMORY_HEADER}
 `;
 }
 
-function extractSection(content: string, header: string): string {
-  const idx = content.indexOf(header);
-  if (idx < 0) return "";
-  const rest = content.slice(idx + header.length);
-  const next = rest.search(/^## /m);
-  const body = next >= 0 ? rest.slice(0, next) : rest;
-  return body.trim();
-}
-
+/**
+ * Wrap global persona content for per-chat fork.
+ *
+ * If the global content already has the `## 核心性格` header, it's in the
+ * correct format — copy as-is. Otherwise (legacy format), wrap it in the
+ * default template structure. This deliberately does NOT parse and recombine
+ * sections: any future section added between `## 核心性格` and `## 相处记忆`
+ * is preserved transparently.
+ */
 function wrapAsForkedPersona(globalContent: string): string {
   const trimmed = globalContent.trim();
   if (!trimmed) return defaultPersonaTemplate();
 
   if (trimmed.includes(CORE_HEADER)) {
-    const core = extractSection(trimmed, CORE_HEADER);
-    const memory = extractSection(trimmed, MEMORY_HEADER);
-    return `${CORE_HEADER}\n\n${core || "（待补充）"}\n\n${MEMORY_HEADER}\n\n${memory}\n`;
+    return `${trimmed}\n`;
   }
 
   return `${CORE_HEADER}\n\n${trimmed}\n\n${MEMORY_HEADER}\n\n`;
@@ -73,14 +72,42 @@ export function readChatPersona(chatPersonaPath: string): string {
   return defaultPersonaTemplate().trim();
 }
 
-/** 只读 ## 相处记忆 段（Ops 窥视用）。 */
-export function readPersonaMemorySection(chatPersonaPath: string): string {
-  if (!existsSync(chatPersonaPath)) return "";
-  const content = readFileSync(chatPersonaPath, "utf8");
-  return extractSection(content, MEMORY_HEADER);
+export function readChatPersonaForSession(
+  chatPersonaPath: string,
+  sessionKey: string,
+): string {
+  const raw = readChatPersona(chatPersonaPath);
+  const idx = raw.indexOf(MEMORY_HEADER);
+  if (idx < 0) return raw;
+
+  const before = raw.slice(0, idx).trimEnd();
+  const memory = raw.slice(idx + MEMORY_HEADER.length).trim();
+  const scopedMemory = filterMemoryTextForSession(sessionKey, memory);
+
+  return `${before}\n\n${MEMORY_HEADER}\n\n${scopedMemory ?? ""}`.trim();
 }
 
-/** L3 sync：只更新 ## 相处记忆 段。 */
+/**
+ * Read the entire persona.md for a chat (Ops peek / debugging).
+ *
+ * Replaces the old `readPersonaMemorySection` which parsed `## 相处记忆`.
+ * The Rust side (`extract_memory_section_body`) is now the sole section
+ * parser; the TS side does not parse sections at all.
+ */
+export function readChatPersonaRaw(chatPersonaPath: string): string {
+  if (!existsSync(chatPersonaPath)) return "";
+  return readFileSync(chatPersonaPath, "utf8").trim();
+}
+
+/**
+ * L3 sync: replace the `## 相处记忆` section body in-place.
+ *
+ * Uses "find marker, replace rest" — locates the `## 相处记忆` marker and
+ * replaces everything from that point onward. Everything before the marker
+ * (including `## 核心性格` and any future sections) is preserved as-is.
+ * This deliberately does NOT parse `## 核心性格`, eliminating the drift
+ * risk between the TS and Rust section parsers.
+ */
 export function writePersonaMemorySection(
   chatPersonaPath: string,
   memoryBody: string,
@@ -89,11 +116,24 @@ export function writePersonaMemorySection(
     forkPersonaTo(chatPersonaPath);
   }
   const current = readFileSync(chatPersonaPath, "utf8");
-  const core = extractSection(current, CORE_HEADER) || "（待补充）";
   const body = memoryBody.trim();
+  const idx = current.indexOf(MEMORY_HEADER);
+
+  if (idx < 0) {
+    // No memory section yet — append it.
+    writeFileSync(
+      chatPersonaPath,
+      `${current.trimEnd()}\n\n${MEMORY_HEADER}\n\n${body}\n`,
+      "utf8",
+    );
+    return;
+  }
+
+  // Replace from the marker onward; preserve everything before it.
+  const before = current.slice(0, idx).trimEnd();
   writeFileSync(
     chatPersonaPath,
-    `${CORE_HEADER}\n\n${core}\n\n${MEMORY_HEADER}\n\n${body}\n`,
+    `${before}\n\n${MEMORY_HEADER}\n\n${body}\n`,
     "utf8",
   );
 }

@@ -23,6 +23,7 @@ static ORCHESTRATOR: LazyLock<Mutex<StackOrchestrator>> =
 
 static HTTP: LazyLock<Client> = LazyLock::new(|| {
     Client::builder()
+        .no_proxy()
         .timeout(Duration::from_secs(2))
         .build()
         .unwrap_or_else(|_| Client::new())
@@ -74,11 +75,10 @@ impl StackOrchestrator {
         }
     }
 
-    pub fn shutdown_all(&mut self) {
-        eprintln!("[stack] cascading shutdown…");
+    pub fn shutdown_ephemeral(&mut self) {
+        eprintln!("[stack] cascading shutdown (driver kept running)…");
         let _ = self.stop_agent();
         let _ = self.stop_memory();
-        let _ = self.stop_driver();
         eprintln!("[stack] shutdown complete");
     }
 
@@ -277,6 +277,8 @@ impl StackOrchestrator {
             .arg(&gateway_src)
             .current_dir(&gateway_root)
             .env("PATH", stack::node_path_env())
+            .env("NO_PROXY", "localhost,127.0.0.0/8")
+            .env("no_proxy", "localhost,127.0.0.0/8")
             .env("TDAI_DATA_DIR", &memory_data)
             .stdout(Stdio::from(log.try_clone().map_err(|e| e.to_string())?))
             .stderr(Stdio::from(log))
@@ -346,6 +348,8 @@ impl StackOrchestrator {
         cmd.arg(&agent_cli)
             .current_dir(&repo)
             .env("PATH", stack::node_path_env())
+            .env("NO_PROXY", "localhost,127.0.0.0/8")
+            .env("no_proxy", "localhost,127.0.0.0/8")
             .env("COCOCAT_CONFIG_DIR", &config_dir)
             .env("COCOCAT_DATA_DIR", &data_dir)
             .env("AGENT_WECHAT_DATA_ROOT", &data_dir)
@@ -392,30 +396,20 @@ pub fn execute_command(service: &str, action: &str) -> Result<String, String> {
     orch.execute(service, action)
 }
 
-pub fn shutdown_all() {
+pub fn shutdown_ephemeral() {
     if let Ok(mut orch) = ORCHESTRATOR.lock() {
-        orch.shutdown_all();
+        orch.shutdown_ephemeral();
     }
 }
 
+use crate::paths::home_dir;
+
 fn stack_data_dir() -> PathBuf {
-    if let Ok(dir) = std::env::var("COCOCAT_DATA_DIR") {
-        return PathBuf::from(dir);
-    }
-    home_dir().join(".local/share/cococat")
+    crate::paths::cococat_data_dir()
 }
 
 fn config_dir() -> PathBuf {
-    if let Ok(dir) = std::env::var("COCOCAT_CONFIG_DIR") {
-        return PathBuf::from(dir);
-    }
-    home_dir().join(".config/cococat")
-}
-
-fn home_dir() -> PathBuf {
-    std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("."))
+    crate::paths::cococat_config_dir()
 }
 
 fn memory_env_file() -> PathBuf {

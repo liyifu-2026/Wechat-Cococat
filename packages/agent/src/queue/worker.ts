@@ -111,9 +111,7 @@ export async function handleInboundJob(
 
     await manager
       .get(chatId)
-      .processSnapshot(chatName, isGroup, snapshot, {
-        replyGuardChecked: true,
-      });
+      .processSnapshot(chatName, isGroup, snapshot);
   } catch (err) {
     if (drainedFromPending && snapshot.length > 0) {
       await restorePendingLocalIds(redis, chatId, snapshot);

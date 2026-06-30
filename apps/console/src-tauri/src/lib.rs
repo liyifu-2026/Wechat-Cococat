@@ -1,18 +1,24 @@
-mod agent_config;
+mod agent_chat_dir;
 mod agent_worker;
+mod chat_profile;
+mod commands;
+mod config_files;
+mod console_logs;
 mod customer_types;
 mod driver_proxy;
+mod escalation_store;
 mod event_bridge;
 mod health;
-mod preview_reply;
-mod wiki_internal;
-mod api_server;
-mod commands;
+mod memory_persona;
+mod paths;
 mod panic_guard;
+mod preview_reply;
 mod proxy;
 mod stack;
 mod stack_orchestrator;
 mod types;
+mod wiki_internal;
+mod api_server;
 
 use panic_guard::run_guarded;
 
@@ -147,31 +153,31 @@ pub fn run() {
             health::get_stack_health_snapshot,
             driver_proxy::driver_fetch,
             driver_proxy::refresh_driver_token_cache,
-            agent_config::read_config_file,
-            agent_config::write_config_file,
-            agent_config::list_agent_chats,
-            agent_config::read_agent_chat_file,
-            agent_config::write_agent_chat_file,
-            agent_config::ensure_and_bind_agent_chat_dir,
-            agent_config::read_chat_agent_proxy_enabled,
-            agent_config::set_chat_agent_proxy_enabled,
-            agent_config::read_memory_persona,
-            agent_config::get_cococat_paths,
-            agent_config::open_cococat_folder,
-            agent_config::detect_legacy_config,
-            agent_config::read_stack_log,
-            agent_config::list_escalation_mutes,
-            agent_config::unmute_escalation_chat,
-            agent_config::mute_escalation_chat,
-            agent_config::read_chat_profile,
-            agent_config::write_chat_profile,
-            agent_config::patch_chat_profile,
+            config_files::read_config_file,
+            config_files::write_config_file,
+            agent_chat_dir::list_agent_chats,
+            agent_chat_dir::read_agent_chat_file,
+            agent_chat_dir::write_agent_chat_file,
+            agent_chat_dir::ensure_and_bind_agent_chat_dir,
+            agent_chat_dir::read_chat_agent_proxy_enabled,
+            agent_chat_dir::set_chat_agent_proxy_enabled,
+            memory_persona::read_memory_persona,
+            config_files::get_cococat_paths,
+            config_files::open_cococat_folder,
+            config_files::detect_legacy_config,
+            console_logs::read_stack_log,
+            escalation_store::list_escalation_mutes,
+            escalation_store::unmute_escalation_chat,
+            escalation_store::mute_escalation_chat,
+            chat_profile::read_chat_profile,
+            chat_profile::write_chat_profile,
+            chat_profile::patch_chat_profile,
             customer_types::read_customer_types_config,
             customer_types::write_customer_types_config,
-            agent_config::read_chat_escalation_state,
-            agent_config::read_chat_memory_summary,
-            agent_config::list_console_events,
-            agent_config::read_chat_wiki_hits,
+            escalation_store::read_chat_escalation_state,
+            memory_persona::read_chat_memory_summary,
+            console_logs::list_console_events,
+            agent_chat_dir::read_chat_wiki_hits,
             preview_reply::preview_agent_reply,
         ])
         .on_window_event(|window, event| {
@@ -209,7 +215,7 @@ pub fn run() {
         .run(|app, event| {
             if matches!(event, tauri::RunEvent::Exit) {
                 agent_worker::shutdown();
-                stack_orchestrator::shutdown_all();
+                stack_orchestrator::shutdown_ephemeral();
             }
             #[cfg(target_os = "macos")]
             if let tauri::RunEvent::Reopen {

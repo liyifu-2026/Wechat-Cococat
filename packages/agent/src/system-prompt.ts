@@ -1,4 +1,4 @@
-import { readChatPersona } from "./persona.js";
+import { readChatPersonaForSession } from "./persona.js";
 import { DISCIPLINE_LAYER } from "./discipline.js";
 import { WIKI_SYSTEM_PROMPT_APPEND } from "./prompt.js";
 import { AGENT_HANDOFF_PROMPT } from "./escalation/agent-handoff.js";
@@ -6,6 +6,7 @@ import { loadWikiRegistry, type WikiRegistry } from "./wiki-registry.js";
 import { wikiContextManager } from "./wiki-context.js";
 
 export type SystemPromptContext = {
+  chatId: string;
   chatName: string;
   isGroup: boolean;
   personaPath: string;
@@ -42,7 +43,7 @@ export function buildSystemPrompt(ctx: SystemPromptContext): string {
     if (ctx.longTermMemory?.trim()) {
       middle.push(`【长期记忆】\n${ctx.longTermMemory.trim()}`);
     }
-    middle.push(readChatPersona(ctx.personaPath));
+    middle.push(readChatPersonaForSession(ctx.personaPath, ctx.chatId));
     if (ctx.wikiEnabled) {
       const wikiBlock =
         ctx.wikiScopePrompt?.trim() || WIKI_SYSTEM_PROMPT_APPEND.trim();

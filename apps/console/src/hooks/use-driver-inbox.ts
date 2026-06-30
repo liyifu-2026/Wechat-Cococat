@@ -176,7 +176,15 @@ export function useDriverInbox(enabled = true) {
             latest,
             messagesExtendedRef.current,
           )
-          return applyMessagesWithOptimistic(chatId, merged)
+          const applied = applyMessagesWithOptimistic(chatId, merged)
+          if (viewModeRef.current === "latest" && !messagesExtendedRef.current) {
+            inboxMessageSliceCache.set(chatId, {
+              messages: applied,
+              hasMoreOlder: applied.length >= INITIAL_MESSAGE_LIMIT,
+              viewMode: "latest",
+            })
+          }
+          return applied
         })
       } catch {
         // 轮询失败不打断当前视图
@@ -214,7 +222,13 @@ export function useDriverInbox(enabled = true) {
             messagesForChat(chatId, stripPendingMessages(prev)),
             chatId,
           )
-          return applyMessagesWithOptimistic(chatId, merged)
+          const applied = applyMessagesWithOptimistic(chatId, merged)
+          inboxMessageSliceCache.set(chatId, {
+            messages: applied,
+            hasMoreOlder: applied.length >= INITIAL_MESSAGE_LIMIT,
+            viewMode: "latest",
+          })
+          return applied
         })
       } catch {
         await refreshMessagesInner(chatId)

@@ -35,16 +35,16 @@ const SERVICE_STYLE_DEFAULTS: Pick<
   ChatStyle,
   "replyDelayMs" | "replyCooldownMs" | "maxSendsPerTurn"
 > = {
-  replyDelayMs: [800, 2000],
+  replyDelayMs: [2_000, 6_000],
   replyCooldownMs: 0,
-  maxSendsPerTurn: 3,
+  maxSendsPerTurn: 1,
 };
 
 const LEGACY_STYLE_DEFAULTS: ChatStyle = {
   groupMode: "bot",
   replyDelayMs: null,
   burstDelayMs: [400, 900],
-  replyCooldownMs: 30_000,
+  replyCooldownMs: 0,
   maxSendsPerTurn: 1,
 };
 
@@ -145,7 +145,8 @@ export function loadChatStyle(stylePath: string): ChatStyle {
       historyLimit:
         typeof raw.historyLimit === "number" ? raw.historyLimit : undefined,
       replyCooldownMs:
-        typeof raw.replyCooldownMs === "number"
+        typeof raw.replyCooldownMs === "number" &&
+        raw.replyCooldownMs !== 30_000
           ? raw.replyCooldownMs
           : undefined,
       maxSendsPerTurn:

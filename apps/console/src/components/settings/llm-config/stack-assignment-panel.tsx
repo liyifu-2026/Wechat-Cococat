@@ -3,13 +3,14 @@ import { Pencil } from "lucide-react"
 import { useTranslation } from "react-i18next"
 import type { LlmStackFile } from "@cococat/shared/llm-stack"
 import { Button } from "@/components/ui/button"
-import type { ProviderConfigs } from "@/stores/wiki-store"
+import type { LlmConfig, ProviderConfigs } from "@/stores/wiki-store"
 import { RoleAssignmentTab } from "./role-assignment-tab"
 import { EffectiveStatusTab } from "./effective-status-tab"
 
 type StackAssignmentPanelProps = {
   stack: LlmStackFile
   providerConfigs: ProviderConfigs
+  llmConfig: LlmConfig
   dirty: boolean
   onChangeStack: (next: LlmStackFile) => void
   onGoProviders: () => void
@@ -21,6 +22,7 @@ type StackAssignmentPanelProps = {
 export function StackAssignmentPanel({
   stack,
   providerConfigs,
+  llmConfig,
   dirty,
   onChangeStack,
   onGoProviders,
@@ -58,7 +60,12 @@ export function StackAssignmentPanel({
             {t("settings.sections.llmConfig.editRoles")}
           </Button>
         </div>
-        <EffectiveStatusTab stack={stack} dirty={false} />
+        <EffectiveStatusTab
+          stack={stack}
+          providerConfigs={providerConfigs}
+          llmConfig={llmConfig}
+          dirty={false}
+        />
       </div>
     )
   }

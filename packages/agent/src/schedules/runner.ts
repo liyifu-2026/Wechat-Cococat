@@ -15,6 +15,7 @@ import {
   isOutboundChatAllowed,
   isQuietHoursNow,
 } from "./quiet-hours.js";
+import { sendWeChatSafely } from "../outbound-safety.js";
 
 export async function handleOutboundJob(
   client: WeChatClient,
@@ -40,7 +41,7 @@ export async function handleOutboundJob(
   }
 
   if (kind === "send_text" && text) {
-    await client.sendMessage({ chatId, text });
+    await sendWeChatSafely(client, { chatId, text });
     return;
   }
 

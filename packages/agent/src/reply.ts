@@ -8,6 +8,7 @@ import {
 import { humanizeReplyText } from "./humanize.js";
 import { stripLeadingAtMentions } from "./mention-names.js";
 import { prepareServiceOutboundText } from "./stealth-send.js";
+import { sendWeChatSafely } from "./outbound-safety.js";
 import type { DelayRange } from "./style.js";
 
 type TextPart = { type: "text"; text: string };
@@ -73,7 +74,7 @@ export async function sendAssistantTextFallback(
       mentions && mentions.length > 0
         ? stripLeadingAtMentions(part, mentions)
         : part;
-    await client.sendMessage({
+    await sendWeChatSafely(client, {
       chatId,
       text: body,
       mentions: i === 0 ? mentions : undefined,

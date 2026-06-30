@@ -1225,6 +1225,11 @@
         "colProvider": "厂商",
         "colCaps": "能力",
         "colFile": "写入文件",
+        "configDetails": "磁盘配置明细",
+        "configDetailsHint": "按实际写入位置展示关键配置；API Key / Token 已脱敏。",
+        "configDetailsFoldedHint": "已折叠",
+        "configUnset": "未设置",
+        "refreshStatus": "刷新",
         "restartAgent": "重启 Agent",
         "restartOk": "Agent 已重启",
         "roles": {

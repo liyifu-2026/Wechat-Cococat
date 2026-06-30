@@ -62,6 +62,7 @@ import {
   applyScrollTopWhenStable,
   cancelScrollToBottom,
   isNearScrollBottom,
+  SCROLL_BOTTOM_THRESHOLD,
   scrollToBottomReliable,
 } from "@/lib/inbox-scroll-utils"
 import { buildInboxMessageRows } from "@/lib/inbox-message-time-divider"
@@ -204,6 +205,12 @@ export function InboxChatShell({
   const scrollToBottomOnLoad = useRef(false)
   const stickToBottomRef = useRef(true)
   const lastScrollTopRef = useRef(0)
+  const wasAtBottomBeforeMessagesUpdateRef = useRef(true)
+  const lastMessageScrollMetricsRef = useRef({
+    scrollTop: 0,
+    scrollHeight: 0,
+    clientHeight: 0,
+  })
   const prevSelectedChatIdRef = useRef<string | null>(null)
   const loadingOlderRef = useRef(false)
   const loadingNewerRef = useRef(false)
@@ -492,6 +499,30 @@ export function InboxChatShell({
     )
   }, [messages, contacts.loggedInUser, contacts.prefetch])
 
+  function captureMessageScrollMetrics(el: HTMLElement) {
+    lastMessageScrollMetricsRef.current = {
+      scrollTop: el.scrollTop,
+      scrollHeight: el.scrollHeight,
+      clientHeight: el.clientHeight,
+    }
+  }
+
+  function wasMessageScrollNearBottom() {
+    const metrics = lastMessageScrollMetricsRef.current
+    if (metrics.scrollHeight <= 0) return true
+    return (
+      metrics.scrollHeight - metrics.scrollTop - metrics.clientHeight <
+      SCROLL_BOTTOM_THRESHOLD
+    )
+  }
+
+  useLayoutEffect(() => {
+    const el = messagesScrollRef.current
+    wasAtBottomBeforeMessagesUpdateRef.current =
+      stickToBottomRef.current && wasMessageScrollNearBottom()
+    if (el) captureMessageScrollMetrics(el)
+  }, [orderedMessages])
+
   useLayoutEffect(() => {
     const pending = pendingScrollRestore.current
     if (!pending) return
@@ -547,11 +578,16 @@ export function InboxChatShell({
       scrollToBottomOnLoad.current = false
       stickToBottomRef.current = true
       lastScrollTopRef.current = el.scrollTop
+      captureMessageScrollMetrics(el)
       return
     }
-    if (stickToBottomRef.current && isNearScrollBottom(el)) {
-      scrollToBottomReliable(el, "gentle")
+    if (
+      stickToBottomRef.current &&
+      wasAtBottomBeforeMessagesUpdateRef.current
+    ) {
+      scrollToBottomReliable(el, "aggressive")
       lastScrollTopRef.current = el.scrollTop
+      captureMessageScrollMetrics(el)
     }
   }, [
     selectedChat?.id,
@@ -565,6 +601,7 @@ export function InboxChatShell({
   const handleMessagesScroll = () => {
     const el = messagesScrollRef.current
     if (!el) return
+    captureMessageScrollMetrics(el)
     setMessageViewport({
       scrollTop: el.scrollTop,
       height: el.clientHeight,

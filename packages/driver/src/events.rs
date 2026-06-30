@@ -3,12 +3,10 @@ use std::collections::HashMap;
 use tokio::sync::broadcast;
 
 use crate::db::get_db;
+use crate::db::queries;
 use crate::sessions::manager::get_session;
 use crate::tools::wechat_chats;
-use crate::tools::wechat_db::find_wechat_pid;
-use crate::tools::wechat_keys::{
-    extract_keys_async, get_stored_keys, mark_unopenable_shards, store_keys,
-};
+use crate::tools::wechat_db::{find_account_dir, find_wechat_pid, resolve_account_dir};
 
 static EVENT_TX: std::sync::OnceLock<broadcast::Sender<String>> = std::sync::OnceLock::new();
 const CHANNEL_CAPACITY: usize = 1024;
@@ -62,37 +60,30 @@ pub fn spawn_event_monitor() {
 
             let account_dir = match &session.logged_in_user {
                 Some(u) => u.clone(),
-                None => continue,
-            };
-
-            {
-                let db = get_db();
-                let stored = get_stored_keys(&db, &session.id, &account_dir);
-                mark_unopenable_shards(&db, &session.id, &account_dir, &stored);
-            }
-
-            let needs_extract = {
-                let db = get_db();
-                crate::tools::wechat_keys::needs_key_extraction(&db, &session.id, &account_dir)
-            };
-
-            if needs_extract {
-                if let Some(pid) = find_wechat_pid() {
-                    let extracted = extract_keys_async(pid).await;
-                    if !extracted.is_empty() {
-                        let db = get_db();
-                        store_keys(&db, &session.id, &account_dir, &extracted);
+                None => {
+                    // Auto-detect account when WeChat is running but user is unknown
+                    // (e.g. after container restart when WeChat was already logged in).
+                    if let Some(pid) = find_wechat_pid() {
+                        let dir = find_account_dir(pid).or_else(|| {
+                            // Fallback: scan xwechat_files directory
+                            resolve_account_dir("")
+                        });
+                        if let Some(dir) = dir {
+                            tracing::info!("[events] auto-detected account_dir={dir} (was null)");
+                            let db = get_db();
+                            queries::update_session_logged_in_user(&db, &session.id, Some(&dir));
+                            dir
+                        } else {
+                            continue;
+                        }
+                    } else {
+                        continue;
                     }
                 }
-                let db = get_db();
-                let keys_snapshot = get_stored_keys(&db, &session.id, &account_dir);
-                mark_unopenable_shards(&db, &session.id, &account_dir, &keys_snapshot);
-            }
-
-            let keys = {
-                let db = get_db();
-                get_stored_keys(&db, &session.id, &account_dir)
             };
+
+            let snapshot = crate::keystore::ensure_keys(&session.id, &account_dir).await;
+            let keys = snapshot.keys;
 
             if !keys.contains_key("session.db") || !keys.contains_key("contact.db") {
                 continue;
