@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button"
 import { ModuleTabs } from "@/components/console/module-tabs"
 import { StackGettingStarted } from "@/components/console/stack-getting-started"
 import { SystemWechatConnect } from "@/components/console/system-wechat-connect"
+import { RuntimeReadinessPanel } from "@/components/console/runtime-readiness-panel"
 import { StatusBadge } from "@/components/console/status-badge"
 import { useModuleTab } from "@/hooks/use-module-tab"
 import {
@@ -287,6 +288,7 @@ export function StackModule({ embedded = false, forcedTab }: StackModuleProps = 
       {activeTab === "service" && (
         <div className={cn("min-h-0 flex-1 overflow-auto py-4", embedded ? "px-8" : "px-6")}>
           <div className="flex flex-col gap-4">
+            <RuntimeReadinessPanel />
             <StackGettingStarted />
 
             {orchestrator && (

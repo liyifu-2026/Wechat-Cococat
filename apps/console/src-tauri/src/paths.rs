@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 
 pub fn home_dir() -> PathBuf {
     std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("."))
 }
@@ -18,14 +19,42 @@ pub fn cococat_config_dir() -> PathBuf {
     if let Ok(dir) = std::env::var("COCOCAT_CONFIG_DIR") {
         return PathBuf::from(dir);
     }
-    home_dir().join(".config/cococat")
+    #[cfg(windows)]
+    {
+        let unix_style = home_dir().join(".config/cococat");
+        if unix_style.exists() {
+            return unix_style;
+        }
+        if let Some(appdata) = std::env::var_os("APPDATA") {
+            return PathBuf::from(appdata).join("CocoCat");
+        }
+        return home_dir().join("AppData/Roaming/CocoCat");
+    }
+    #[cfg(not(windows))]
+    {
+        home_dir().join(".config/cococat")
+    }
 }
 
 pub fn cococat_data_dir() -> PathBuf {
     if let Ok(dir) = std::env::var("COCOCAT_DATA_DIR") {
         return PathBuf::from(dir);
     }
-    home_dir().join(".local/share/cococat")
+    #[cfg(windows)]
+    {
+        let unix_style = home_dir().join(".local/share/cococat");
+        if unix_style.exists() {
+            return unix_style;
+        }
+        if let Some(local_appdata) = std::env::var_os("LOCALAPPDATA") {
+            return PathBuf::from(local_appdata).join("CocoCat");
+        }
+        return home_dir().join("AppData/Local/CocoCat");
+    }
+    #[cfg(not(windows))]
+    {
+        home_dir().join(".local/share/cococat")
+    }
 }
 
 pub fn ensure_parent(path: &Path) -> Result<(), String> {

@@ -380,6 +380,19 @@
       "startAgent": "启动 Agent",
       "migrateHint": "检测到旧版 agent-wechat 配置，请在终端运行：pnpm migrate"
     },
+    "runtime": {
+      "title": "运行时就绪检查",
+      "ready": "本机运行时已就绪，可以启动服务栈。",
+      "needsSetup": "本机还缺少运行时条件。先完成这些项，再启动服务栈。",
+      "copyInstall": "复制安装命令",
+      "copied": "已复制",
+      "state": {
+        "ready": "就绪",
+        "missing": "缺失",
+        "warning": "警告",
+        "unknown": "未知"
+      }
+    },
     "modules": {
       "overview": "总览",
       "inbox": "收件箱",

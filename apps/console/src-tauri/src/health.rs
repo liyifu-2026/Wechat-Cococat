@@ -67,7 +67,8 @@ impl Default for HealthCache {
 static HEALTH_CACHE: LazyLock<Mutex<HealthCache>> =
     LazyLock::new(|| Mutex::new(HealthCache::default()));
 
-static HTTP_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| driver_proxy::driver_http_client());
+static HTTP_CLIENT: LazyLock<reqwest::Client> =
+    LazyLock::new(|| driver_proxy::driver_http_client());
 
 fn driver_base_url() -> String {
     driver_proxy::driver_base_url()
@@ -85,13 +86,7 @@ fn stack_dir() -> PathBuf {
     if let Ok(dir) = std::env::var("COCOCAT_DATA_DIR") {
         return PathBuf::from(dir).join("stack");
     }
-    dirs_home().join(".local/share/cococat/stack")
-}
-
-fn dirs_home() -> PathBuf {
-    std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("."))
+    crate::paths::cococat_data_dir().join("stack")
 }
 
 fn pid_file(name: &str) -> PathBuf {
@@ -105,19 +100,7 @@ fn pid_alive(pid_file: &PathBuf) -> bool {
     let Ok(pid) = raw.trim().parse::<u32>() else {
         return false;
     };
-    if pid == 0 {
-        return false;
-    }
-    #[cfg(target_os = "linux")]
-    {
-        return std::path::Path::new(&format!("/proc/{pid}")).is_dir();
-    }
-    #[cfg(not(target_os = "linux"))]
-    {
-        let _ = pid;
-        // Non-Linux: pid file present is a weak signal; HTTP/PID scripts use kill -0.
-        pid_file.exists()
-    }
+    crate::stack_orchestrator::pid_alive(pid)
 }
 
 async fn probe_driver(
@@ -145,31 +128,21 @@ async fn probe_driver(
     if let Ok(resp) = get_with_auth(client, &session_url, &auth_header).await {
         if resp.status().is_success() {
             let auth = resp.json::<DriverSessionAuth>().await.ok();
-            return (
-                "up".to_string(),
-                format!("driver: up ({base})"),
-                auth,
-            );
+            return ("up".to_string(), format!("driver: up ({base})"), auth);
         }
     }
 
     let status_url = format!("{base}/api/status");
     match get_with_auth(client, &status_url, &auth_header).await {
-        Ok(resp) if resp.status().is_success() => (
-            "up".to_string(),
-            format!("driver: up ({base})"),
-            None,
-        ),
+        Ok(resp) if resp.status().is_success() => {
+            ("up".to_string(), format!("driver: up ({base})"), None)
+        }
         Ok(_) => (
             "degraded".to_string(),
             format!("driver: container running but API unreachable ({base})"),
             None,
         ),
-        Err(_) => (
-            "down".to_string(),
-            "driver: down".to_string(),
-            None,
-        ),
+        Err(_) => ("down".to_string(), "driver: down".to_string(), None),
     }
 }
 
@@ -186,9 +159,7 @@ async fn probe_memory(client: &reqwest::Client, base: &str) -> (String, String) 
                     "degraded".to_string(),
                     format!(
                         "memory: pid {} but health failed",
-                        std::fs::read_to_string(&pid)
-                            .unwrap_or_default()
-                            .trim()
+                        std::fs::read_to_string(&pid).unwrap_or_default().trim()
                     ),
                 )
             } else {
@@ -202,9 +173,7 @@ async fn probe_memory(client: &reqwest::Client, base: &str) -> (String, String) 
                     "degraded".to_string(),
                     format!(
                         "memory: pid {} but health failed",
-                        std::fs::read_to_string(&pid)
-                            .unwrap_or_default()
-                            .trim()
+                        std::fs::read_to_string(&pid).unwrap_or_default().trim()
                     ),
                 )
             } else {
@@ -240,9 +209,7 @@ fn apply_driver_auth(snapshot: &mut StackHealthSnapshotDto, auth: Option<DriverS
     snapshot.wechat_auth_status = status.clone();
     snapshot.wechat_logged_in_user = auth.logged_in_user;
     snapshot.wechat_logged_in = status == "logged_in";
-    snapshot.chats_ready = auth
-        .chats_ready
-        .unwrap_or(snapshot.wechat_logged_in);
+    snapshot.chats_ready = auth.chats_ready.unwrap_or(snapshot.wechat_logged_in);
     snapshot.chats_ready_reason = auth.chats_ready_reason;
 }
 
@@ -310,7 +277,9 @@ pub async fn fetch_stack_health_snapshot(force: bool) -> Result<StackHealthSnaps
 }
 
 #[tauri::command]
-pub async fn get_stack_health_snapshot(force: Option<bool>) -> Result<StackHealthSnapshotDto, String> {
+pub async fn get_stack_health_snapshot(
+    force: Option<bool>,
+) -> Result<StackHealthSnapshotDto, String> {
     fetch_stack_health_snapshot(force.unwrap_or(false)).await
 }
 

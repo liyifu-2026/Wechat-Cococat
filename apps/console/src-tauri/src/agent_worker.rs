@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 use serde_json::{json, Value};
 use tokio::sync::Mutex as AsyncMutex;
 
-use crate::stack;
+use crate::{runtime_layout, stack};
 use crate::wiki_internal;
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
@@ -50,7 +50,7 @@ static WORKER_STATE: LazyLock<Mutex<AgentWorkerState>> =
 static REQUEST_SERIAL: AsyncMutex<()> = AsyncMutex::const_new(());
 
 fn worker_script_path() -> PathBuf {
-    stack::monorepo_root().join("packages/agent/dist/worker-entry.js")
+    runtime_layout::agent_entry("worker-entry.js")
 }
 
 fn resolve_node_binary() -> String {
@@ -173,7 +173,7 @@ fn spawn_worker_locked(state: &mut AgentWorkerState) -> Result<(), String> {
     }
 
     let node = resolve_node_binary();
-    let repo = stack::monorepo_root();
+    let app_root = runtime_layout::app_root();
 
     let mut child = Command::new(&node)
         .arg(&script)
@@ -181,7 +181,11 @@ fn spawn_worker_locked(state: &mut AgentWorkerState) -> Result<(), String> {
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit())
-        .env("COCOCAT_REPO_ROOT", repo.to_string_lossy().to_string())
+        .env("COCOCAT_REPO_ROOT", app_root.to_string_lossy().to_string())
+        .env(
+            "COCOCAT_RESOURCE_ROOT",
+            runtime_layout::resource_root().to_string_lossy().to_string(),
+        )
         .env("COCOCAT_WIKI_INTERNAL", "1")
         .env("PATH", stack::node_path_env())
         .env("NO_PROXY", "localhost,127.0.0.0/8")

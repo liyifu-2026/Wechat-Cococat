@@ -20,6 +20,7 @@ packages/agent-server-rust/bindings/
 
 # Tauri (llm_wiki)
 src-tauri/gen/
+apps/console/src-tauri/runtime/
 
 # Docker build artifacts
 docker/wechat.deb

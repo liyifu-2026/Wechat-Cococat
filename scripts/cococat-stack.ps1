@@ -6,10 +6,48 @@ param(
 
 $ErrorActionPreference = "Stop"
 $RepoRoot = if ($env:COCOCAT_REPO_ROOT) { $env:COCOCAT_REPO_ROOT } else { Split-Path $PSScriptRoot -Parent }
-$CococatConfig = if ($env:COCOCAT_CONFIG_DIR) { $env:COCOCAT_CONFIG_DIR } else { Join-Path $env:USERPROFILE ".config\cococat" }
-$CococatData = if ($env:COCOCAT_DATA_DIR) { $env:COCOCAT_DATA_DIR } else { Join-Path $env:USERPROFILE ".local\share\cococat" }
+$RuntimeRoot = if ($env:COCOCAT_RESOURCE_ROOT) { $env:COCOCAT_RESOURCE_ROOT } else { $RepoRoot }
+$IsSourceCheckout = Test-Path (Join-Path $RepoRoot "pnpm-lock.yaml")
+$DefaultConfigRoot = if ($env:APPDATA) { Join-Path $env:APPDATA "CocoCat" } else { Join-Path $env:USERPROFILE ".config\cococat" }
+$DefaultDataRoot = if ($env:LOCALAPPDATA) { Join-Path $env:LOCALAPPDATA "CocoCat" } else { Join-Path $env:USERPROFILE ".local\share\cococat" }
+$CococatConfig = if ($env:COCOCAT_CONFIG_DIR) { $env:COCOCAT_CONFIG_DIR } else { $DefaultConfigRoot }
+$CococatData = if ($env:COCOCAT_DATA_DIR) { $env:COCOCAT_DATA_DIR } else { $DefaultDataRoot }
 $StackDir = Join-Path $CococatData "stack"
 New-Item -ItemType Directory -Force -Path $StackDir | Out-Null
+
+function Get-PnpmInvocation {
+  $pnpm = Get-Command pnpm -ErrorAction SilentlyContinue
+  if ($pnpm) { return @($pnpm.Source) }
+  $corepack = Get-Command corepack -ErrorAction SilentlyContinue
+  if ($corepack) { return @($corepack.Source, "pnpm") }
+  Write-Error "pnpm/corepack not found. Run scripts\install-windows.ps1 after installing Node.js 22+."
+}
+
+function Invoke-Pnpm {
+  param([string[]]$PnpmArgs)
+  $cmd = @(Get-PnpmInvocation)
+  $file = $cmd[0]
+  $args = @()
+  if ($cmd.Length -gt 1) { $args += $cmd[1..($cmd.Length - 1)] }
+  $args += $PnpmArgs
+  & $file @args
+}
+
+function Import-DotEnv {
+  param([string]$Path)
+  if (-not (Test-Path $Path)) { return }
+  Get-Content $Path | ForEach-Object {
+    $line = $_.Trim()
+    if ($line -and -not $line.StartsWith("#") -and $line.Contains("=")) {
+      $key, $value = $line.Split("=", 2)
+      $key = $key.Trim()
+      $value = $value.Trim().Trim('"').Trim("'")
+      if ($key) {
+        [System.Environment]::SetEnvironmentVariable($key, $value, "Process")
+      }
+    }
+  }
+}
 
 function Read-Token {
   foreach ($p in @(
@@ -65,7 +103,9 @@ function Start-Driver {
   }
   $env:AGENT_WECHAT_DATA_ROOT = $CococatData
   $env:COCOCAT_CONFIG_DIR = $CococatConfig
-  Push-Location $RepoRoot
+  $env:COCOCAT_DATA_DIR = $CococatData
+  $env:COCOCAT_RESOURCE_ROOT = $RuntimeRoot
+  Push-Location $RuntimeRoot
   docker compose up -d
   Pop-Location
   Start-Sleep -Seconds 2
@@ -73,7 +113,7 @@ function Start-Driver {
 }
 
 function Stop-Driver {
-  Push-Location $RepoRoot
+  Push-Location $RuntimeRoot
   docker compose down 2>$null
   Pop-Location
   Write-Output "driver: stopped"
@@ -89,13 +129,31 @@ function Start-Agent {
   if (-not $token) { Write-Error "agent: missing token"; return }
   $env:COCOCAT_CONFIG_DIR = $CococatConfig
   $env:COCOCAT_DATA_DIR = $CococatData
+  $env:COCOCAT_RESOURCE_ROOT = $RuntimeRoot
+  $env:AGENT_WECHAT_DATA_ROOT = $CococatData
   $env:AGENT_WECHAT_TOKEN = $token
+  Import-DotEnv (Join-Path $CococatConfig "agent.env")
+  Import-DotEnv (Join-Path $CococatConfig "caption.env")
   $log = Join-Path $StackDir "agent.log"
-  Push-Location $RepoRoot
-  if (-not (Test-Path "packages\agent\dist")) {
-    pnpm agent:build
+  $errLog = Join-Path $StackDir "agent.err.log"
+  Push-Location $RuntimeRoot
+  if (-not (Test-Path "packages\agent\dist\cli.js") -and $IsSourceCheckout) {
+    Pop-Location
+    Push-Location $RepoRoot
+    Invoke-Pnpm @("agent:build")
   }
-  $proc = Start-Process -FilePath "pnpm" -ArgumentList "agent" -PassThru -RedirectStandardOutput $log -RedirectStandardError $log -WindowStyle Hidden
+  if (-not (Test-Path (Join-Path $RuntimeRoot "packages\agent\dist\cli.js"))) {
+    Write-Error "agent: missing packaged build at $RuntimeRoot\packages\agent\dist\cli.js"
+    return
+  }
+  $node = Get-Command node -ErrorAction SilentlyContinue
+  if (-not $node) {
+    Write-Error "agent: node not found. Install Node.js 22+."
+    return
+  }
+  $file = $node.Source
+  $args = @((Join-Path $RuntimeRoot "packages\agent\dist\cli.js"))
+  $proc = Start-Process -FilePath $file -ArgumentList $args -PassThru -RedirectStandardOutput $log -RedirectStandardError $errLog -WindowStyle Hidden
   $proc.Id | Set-Content (Join-Path $StackDir "agent.pid")
   Pop-Location
   Start-Sleep -Seconds 2
@@ -118,7 +176,11 @@ function Invoke-MemoryScript {
   param([string]$MemAction)
   $bash = Get-Command bash -ErrorAction SilentlyContinue
   if ($bash) {
-    & bash (Join-Path $RepoRoot "scripts/start-tencentdb-gateway.sh") $MemAction
+    $script = Join-Path $RuntimeRoot "scripts/start-tencentdb-gateway.sh"
+    if (-not (Test-Path $script)) {
+      $script = Join-Path $RepoRoot "scripts/start-tencentdb-gateway.sh"
+    }
+    & bash $script $MemAction
   } else {
     Write-Output "memory: install Git Bash or start gateway manually"
   }

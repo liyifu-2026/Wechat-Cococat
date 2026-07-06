@@ -1,0 +1,91 @@
+name: Windows Smoke
+
+on:
+  pull_request:
+    paths:
+      - 'apps/console/**'
+      - 'packages/shared/**'
+      - 'packages/agent/**'
+      - 'scripts/**'
+      - 'config/**'
+      - 'README.md'
+      - 'CONTEXT.md'
+      - 'pnpm-lock.yaml'
+      - 'package.json'
+      - 'pnpm-workspace.yaml'
+      - '.github/workflows/windows-smoke.yml'
+  workflow_dispatch:
+
+jobs:
+  windows-smoke:
+    runs-on: windows-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/console/src-tauri
+
+      - name: Validate PowerShell scripts
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $files = @(
+            "scripts/install-windows.ps1",
+            "scripts/cococat-stack.ps1",
+            "scripts/dev-deploy.ps1",
+            "scripts/smoke-container.ps1"
+          )
+          foreach ($file in $files) {
+            $tokens = $null
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile($file, [ref]$tokens, [ref]$errors) | Out-Null
+            if ($errors.Count -gt 0) {
+              $errors | ForEach-Object { Write-Error "${file}:$($_.Extent.StartLineNumber): $($_.Message)" }
+              exit 1
+            }
+            Write-Host "OK: $file"
+          }
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build shared + agent
+        run: pnpm agent:build
+
+      - name: Prepare Console runtime
+        run: pnpm console:runtime
+
+      - name: Test shared package
+        run: pnpm --filter @cococat/shared test
+
+      - name: Build Console frontend
+        run: pnpm --filter @cococat/console build
+
+      - name: Tauri cargo check (Windows)
+        working-directory: apps/console/src-tauri
+        run: cargo check
+
+      - name: Tauri paths tests
+        working-directory: apps/console/src-tauri
+        run: cargo test paths::tests
+
+      - name: Tauri stack orchestrator tests
+        working-directory: apps/console/src-tauri
+        run: cargo test stack_orchestrator::tests

@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::process::Command;
 
 use crate::agent_worker;
-use crate::stack;
+use crate::{runtime_layout, stack};
 
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -24,11 +24,11 @@ pub struct PreviewReplyResult {
 }
 
 fn preview_script() -> PathBuf {
-    stack::monorepo_root().join("scripts/preview-agent-reply.mjs")
+    runtime_layout::script_path("preview-agent-reply.mjs")
 }
 
 fn agent_entry() -> PathBuf {
-    stack::monorepo_root().join("packages/agent/dist/index.js")
+    runtime_layout::agent_entry("index.js")
 }
 
 fn run_agent_preview_cold(query: &str, chat_id: Option<&str>) -> Result<PreviewReplyResult, String> {
@@ -47,7 +47,11 @@ fn run_agent_preview_cold(query: &str, chat_id: Option<&str>) -> Result<PreviewR
         .arg(query.trim())
         .env(
             "COCOCAT_REPO_ROOT",
-            stack::monorepo_root().to_string_lossy().to_string(),
+            runtime_layout::app_root().to_string_lossy().to_string(),
+        )
+        .env(
+            "COCOCAT_RESOURCE_ROOT",
+            runtime_layout::resource_root().to_string_lossy().to_string(),
         )
         .env("PATH", stack::node_path_env())
         .env("NO_PROXY", "localhost,127.0.0.0/8")

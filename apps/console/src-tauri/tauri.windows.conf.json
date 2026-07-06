@@ -1,5 +1,23 @@
 {
   "bundle": {
-    "resources": ["pdfium/pdfium.dll"]
+    "targets": ["nsis", "msi"],
+    "resources": [
+      "pdfium/pdfium.dll",
+      "runtime"
+    ],
+    "windows": {
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper"
+      },
+      "nsis": {
+        "displayLanguageSelector": true,
+        "installerIcon": "icons/icon.ico",
+        "installMode": "perMachine",
+        "languages": ["English", "SimpChinese"]
+      },
+      "wix": {
+        "language": ["en-US", "zh-CN"]
+      }
+    }
   }
 }

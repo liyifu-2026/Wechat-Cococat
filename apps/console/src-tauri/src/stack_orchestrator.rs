@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 use reqwest::blocking::Client;
 use uuid::Uuid;
 
-use crate::stack;
+use crate::{runtime_layout, stack};
 
 const DRIVER_URL: &str = "http://127.0.0.1:6174";
 const MEMORY_URL: &str = "http://127.0.0.1:8420";
@@ -211,10 +211,10 @@ impl StackOrchestrator {
     }
 
     fn stop_driver(&mut self) -> Result<String, String> {
-        let repo = stack::monorepo_root();
+        let compose_dir = runtime_layout::compose_dir();
         let _ = Command::new("docker")
             .args(["compose", "down"])
-            .current_dir(&repo)
+            .current_dir(&compose_dir)
             .env("PATH", stack::node_path_env())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -333,11 +333,11 @@ impl StackOrchestrator {
         }
 
         let token = stack::read_cococat_token()?;
-        let repo = stack::monorepo_root();
-        let agent_cli = repo.join("packages/agent/dist/cli.js");
+        let app_root = runtime_layout::app_root();
+        let agent_cli = runtime_layout::agent_entry("cli.js");
         if !agent_cli.is_file() {
             return Err(format!(
-                "agent: missing {} — run: pnpm --filter @cococat/agent build",
+                "agent: missing {} — build Agent before packaging or run: pnpm --filter @cococat/agent build",
                 agent_cli.display()
             ));
         }
@@ -346,10 +346,12 @@ impl StackOrchestrator {
         let data_dir = stack_data_dir();
         let mut cmd = Command::new(find_node_binary()?);
         cmd.arg(&agent_cli)
-            .current_dir(&repo)
+            .current_dir(&app_root)
             .env("PATH", stack::node_path_env())
             .env("NO_PROXY", "localhost,127.0.0.0/8")
             .env("no_proxy", "localhost,127.0.0.0/8")
+            .env("COCOCAT_REPO_ROOT", &app_root)
+            .env("COCOCAT_RESOURCE_ROOT", runtime_layout::resource_root())
             .env("COCOCAT_CONFIG_DIR", &config_dir)
             .env("COCOCAT_DATA_DIR", &data_dir)
             .env("AGENT_WECHAT_DATA_ROOT", &data_dir)
@@ -449,7 +451,25 @@ pub(crate) fn pid_alive(pid: u32) -> bool {
     {
         unsafe { libc::kill(pid as i32, 0) == 0 }
     }
-    #[cfg(not(unix))]
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::Foundation::{CloseHandle, STILL_ACTIVE};
+        use windows_sys::Win32::System::Threading::{
+            GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+        };
+
+        unsafe {
+            let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+            if handle == 0 as _ {
+                return false;
+            }
+            let mut exit_code = 0;
+            let ok = GetExitCodeProcess(handle, &mut exit_code) != 0;
+            let _ = CloseHandle(handle);
+            ok && exit_code == STILL_ACTIVE
+        }
+    }
+    #[cfg(not(any(unix, windows)))]
     {
         let _ = pid;
         false
@@ -478,11 +498,37 @@ fn signal_stop(pid: u32, grace_ms: u64) {
     unsafe {
         libc::kill(pid as i32, libc::SIGTERM);
     }
+    #[cfg(windows)]
+    unsafe {
+        use windows_sys::Win32::Foundation::CloseHandle;
+        use windows_sys::Win32::System::Threading::{
+            OpenProcess, TerminateProcess, PROCESS_TERMINATE,
+        };
+
+        let handle = OpenProcess(PROCESS_TERMINATE, 0, pid);
+        if handle != 0 as _ {
+            let _ = TerminateProcess(handle, 1);
+            let _ = CloseHandle(handle);
+        }
+    }
     thread::sleep(Duration::from_millis(grace_ms));
     if pid_alive(pid) {
         #[cfg(unix)]
         unsafe {
             libc::kill(pid as i32, libc::SIGKILL);
+        }
+        #[cfg(windows)]
+        unsafe {
+            use windows_sys::Win32::Foundation::CloseHandle;
+            use windows_sys::Win32::System::Threading::{
+                OpenProcess, TerminateProcess, PROCESS_TERMINATE,
+            };
+
+            let handle = OpenProcess(PROCESS_TERMINATE, 0, pid);
+            if handle != 0 as _ {
+                let _ = TerminateProcess(handle, 1);
+                let _ = CloseHandle(handle);
+            }
         }
     }
 }
@@ -498,13 +544,13 @@ fn find_node_binary() -> Result<PathBuf, String> {
         return Ok(p);
     }
     let home = home_dir();
-    let repo = stack::monorepo_root();
+    let app_root = runtime_layout::app_root();
     for candidate in [
         home.join(".local/share/cococat/bin/node"),
         PathBuf::from("/opt/homebrew/bin/node"),
         PathBuf::from("/usr/local/bin/node"),
         PathBuf::from("/usr/bin/node"),
-        repo.join("node_modules/.bin/node"),
+        app_root.join("node_modules/.bin/node"),
     ] {
         if candidate.is_file() {
             return Ok(candidate);
@@ -521,10 +567,7 @@ fn find_node_binary() -> Result<PathBuf, String> {
             return Ok(latest);
         }
     }
-    Err(
-        "node not found — install Node or set COCOCAT_NODE (GUI apps often lack PATH)"
-            .into(),
-    )
+    Err("node not found — install Node or set COCOCAT_NODE (GUI apps often lack PATH)".into())
 }
 
 fn load_env_file(path: &Path) -> HashMap<String, String> {
@@ -598,9 +641,7 @@ fn driver_api_up() -> bool {
     if let Some(t) = token.filter(|s| !s.is_empty()) {
         req = req.header("Authorization", format!("Bearer {t}"));
     }
-    req.send()
-        .map(|r| r.status().is_success())
-        .unwrap_or(false)
+    req.send().map(|r| r.status().is_success()).unwrap_or(false)
 }
 
 fn memory_health_up() -> bool {
@@ -659,9 +700,7 @@ fn docker_container_running(name: &str) -> Result<bool, String> {
         .env("PATH", stack::node_path_env())
         .output()
         .map_err(|e| format!("docker ps failed: {e}"))?;
-    Ok(!String::from_utf8_lossy(&output.stdout)
-        .trim()
-        .is_empty())
+    Ok(!String::from_utf8_lossy(&output.stdout).trim().is_empty())
 }
 
 fn driver_container_running() -> Result<bool, String> {
@@ -701,12 +740,12 @@ fn try_start_existing_driver_containers() -> Result<bool, String> {
 }
 
 fn run_driver_compose_up() -> Result<(), String> {
-    let repo = stack::monorepo_root();
+    let compose_dir = runtime_layout::compose_dir();
     let data = stack_data_dir();
     let cfg = config_dir();
     let status = Command::new("docker")
         .args(["compose", "up", "-d"])
-        .current_dir(&repo)
+        .current_dir(&compose_dir)
         .env("PATH", stack::node_path_env())
         .env("COCOCAT_DATA_DIR", &data)
         .env("AGENT_WECHAT_DATA_ROOT", &data)
@@ -716,13 +755,14 @@ fn run_driver_compose_up() -> Result<(), String> {
     if status.success() {
         return Ok(());
     }
-    let cli = repo.join("packages/cli/dist/cli.js");
+    let app_root = runtime_layout::app_root();
+    let cli = app_root.join("packages/cli/dist/cli.js");
     if cli.is_file() {
         let node = find_node_binary()?;
         let s = Command::new(&node)
             .arg(&cli)
             .arg("up")
-            .current_dir(&repo)
+            .current_dir(&app_root)
             .env("PATH", stack::node_path_env())
             .env("COCOCAT_DATA_DIR", &data)
             .env("COCOCAT_CONFIG_DIR", &cfg)

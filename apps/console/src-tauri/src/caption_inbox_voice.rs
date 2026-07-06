@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::process::Command;
 
-use crate::stack;
+use crate::{runtime_layout, stack};
 
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -13,12 +13,11 @@ pub struct CaptionInboxVoiceResult {
 }
 
 fn caption_script() -> PathBuf {
-    stack::monorepo_root().join("scripts/caption-inbox-voice.mjs")
+    runtime_layout::script_path("caption-inbox-voice.mjs")
 }
 
 fn agent_caption_entry() -> PathBuf {
-    stack::monorepo_root()
-        .join("packages/agent/dist/caption-llm.js")
+    runtime_layout::agent_entry("caption-llm.js")
 }
 
 fn run_caption_script(audio_data_url: &str) -> Result<CaptionInboxVoiceResult, String> {
@@ -42,7 +41,11 @@ fn run_caption_script(audio_data_url: &str) -> Result<CaptionInboxVoiceResult, S
         .arg(url)
         .env(
             "COCOCAT_REPO_ROOT",
-            stack::monorepo_root().to_string_lossy().to_string(),
+            runtime_layout::app_root().to_string_lossy().to_string(),
+        )
+        .env(
+            "COCOCAT_RESOURCE_ROOT",
+            runtime_layout::resource_root().to_string_lossy().to_string(),
         )
         .env("PATH", stack::node_path_env())
         .env("NO_PROXY", "localhost,127.0.0.0/8")

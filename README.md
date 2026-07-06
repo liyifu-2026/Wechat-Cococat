@@ -11,6 +11,8 @@
 
 ## 快速开始
 
+### Debian / macOS
+
 ```bash
 cd Wechat-Cococat
 pnpm install
@@ -27,9 +29,93 @@ export REDIS_URL=redis://127.0.0.1:6379
 pnpm agent
 ```
 
-打包 Console 安装包：`pnpm console:bundle`（或 tag `cococat-v*` 触发 CI）。
+### Windows 简洁部署
 
-配置目录：`~/.config/cococat/` · 数据：`~/.local/share/cococat/`  
+前置依赖：Docker Desktop、Node.js 22+。
+
+```powershell
+cd Wechat-Cococat
+powershell -ExecutionPolicy Bypass -File .\scripts\install-windows.ps1 -BuildImage
+.\start-cococat.cmd
+```
+
+如果发布包内已带 Docker 镜像 tar，可用：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\install-windows.ps1 -ImageTar .\agent-wechat-amd64.tar
+```
+
+查看/停止栈：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\cococat-stack.ps1 status all
+powershell -ExecutionPolicy Bypass -File .\scripts\cococat-stack.ps1 stop all
+```
+
+### Windows 正式安装器
+
+#### 产出安装器
+
+发布 tag `cococat-v*` 或手动运行 GitHub Actions 的 **Console Bundle** workflow，会产出：
+
+- `cococat-console-windows`：Windows NSIS / MSI 安装器
+- `cococat-console-linux`：Linux bundle
+
+Windows 安装器负责安装 CocoCat Console，并随包带上 runtime 资源：`docker-compose.yml`、Windows bootstrap 脚本、配置模板，以及已 `pnpm deploy --prod` 的 Agent 运行包和生产依赖。安装后不需要保留源码目录。
+
+本地打包 Console 安装包：
+
+```bash
+pnpm install
+pnpm console:bundle
+```
+
+`pnpm console:bundle` 会先生成 `apps/console/src-tauri/runtime/`，再执行 Tauri 打包；该 runtime 目录是构建产物，不提交到 git。打包产物位于：
+
+```text
+apps/console/src-tauri/target/release/bundle/
+```
+
+#### Win11 安装使用
+
+前置依赖：
+
+- Docker Desktop，安装后保持运行
+- Node.js 22 LTS 或更新版本
+- Driver 镜像 `agent-wechat:amd64`，可现场构建或离线导入
+
+安装流程：
+
+1. 运行 `CocoCat_*_x64-setup.exe` 或 `.msi` 安装 CocoCat Console。
+2. 打开 CocoCat Console，进入服务页查看“运行时就绪检查”。
+3. 如果缺 Docker 或 Node，按提示安装后重新打开 Console。
+4. 如果缺 Driver 镜像，使用源码/发布包中的 bootstrap 脚本准备镜像。
+
+有源码目录时，可现场构建镜像：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\install-windows.ps1 -BuildImage
+```
+
+有离线镜像包时，导入镜像：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\install-windows.ps1 -ImageTar .\agent-wechat-amd64.tar
+```
+
+完成后重新打开 CocoCat Console，在服务页启动 Driver / Memory / Agent。
+
+查看/停止运行栈：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\cococat-stack.ps1 status all
+powershell -ExecutionPolicy Bypass -File .\scripts\cococat-stack.ps1 stop all
+```
+
+配置目录：Unix/macOS `~/.config/cococat/`，Windows `%APPDATA%\CocoCat\`
+
+数据目录：Unix/macOS `~/.local/share/cococat/`，Windows `%LOCALAPPDATA%\CocoCat\`
+
 Agent 环境模板：[`config/agent.env.example`](./config/agent.env.example)（含 `REDIS_URL` 队列）
 
 ## Monorepo 布局（M3）

@@ -2,9 +2,24 @@ import { existsSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
+function windowsConfigDir(): string {
+  return join(
+    process.env.APPDATA?.trim() || join(homedir(), "AppData", "Roaming"),
+    "CocoCat",
+  );
+}
+
+function windowsDataRoot(): string {
+  return join(
+    process.env.LOCALAPPDATA?.trim() || join(homedir(), "AppData", "Local"),
+    "CocoCat",
+  );
+}
+
 export function getCococatConfigDir(): string {
   return (
     process.env.COCOCAT_CONFIG_DIR?.trim() ||
+    (process.platform === "win32" ? windowsConfigDir() : undefined) ||
     join(homedir(), ".config", "cococat")
   );
 }
@@ -12,6 +27,7 @@ export function getCococatConfigDir(): string {
 export function getCococatDataRoot(): string {
   return (
     process.env.COCOCAT_DATA_DIR?.trim() ||
+    (process.platform === "win32" ? windowsDataRoot() : undefined) ||
     join(homedir(), ".local", "share", "cococat")
   );
 }

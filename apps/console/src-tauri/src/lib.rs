@@ -14,6 +14,8 @@ mod paths;
 mod panic_guard;
 mod preview_reply;
 mod proxy;
+mod runtime_layout;
+mod runtime_readiness;
 mod stack;
 mod stack_orchestrator;
 mod types;
@@ -72,7 +74,8 @@ pub fn run() {
             // library via Tauri's platform-correct resource path.
             use tauri::Manager;
             if let Ok(dir) = app.path().resource_dir() {
-                commands::fs::set_resource_dir_hint(dir);
+                commands::fs::set_resource_dir_hint(dir.clone());
+                runtime_layout::set_resource_dir_hint(dir);
             }
             // Apply user-configured global HTTP proxy by setting
             // HTTP_PROXY / HTTPS_PROXY / NO_PROXY env vars BEFORE
@@ -148,6 +151,7 @@ pub fn run() {
             commands::file_sync::retry_file_change_task,
             commands::file_sync::ignore_file_change_task,
             set_proxy_env,
+            runtime_readiness::get_runtime_readiness,
             stack::stack_command,
             stack::read_cococat_token_cmd,
             health::get_stack_health_snapshot,

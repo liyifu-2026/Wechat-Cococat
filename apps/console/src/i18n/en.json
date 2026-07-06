@@ -380,6 +380,19 @@
       "startAgent": "Start Agent",
       "migrateHint": "Legacy agent-wechat config detected. Run in terminal: pnpm migrate"
     },
+    "runtime": {
+      "title": "Runtime readiness",
+      "ready": "This machine is ready to start the stack.",
+      "needsSetup": "This machine is missing runtime prerequisites. Complete these before starting the stack.",
+      "copyInstall": "Copy install command",
+      "copied": "Copied",
+      "state": {
+        "ready": "Ready",
+        "missing": "Missing",
+        "warning": "Warning",
+        "unknown": "Unknown"
+      }
+    },
     "modules": {
       "overview": "Overview",
       "inbox": "Inbox",

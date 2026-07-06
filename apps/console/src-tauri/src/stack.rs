@@ -1,16 +1,11 @@
 use std::path::{Path, PathBuf};
 
 use crate::paths::{cococat_config_dir, home_dir};
+use crate::runtime_layout;
 use crate::stack_orchestrator;
 
 fn repo_root() -> PathBuf {
-    if let Ok(root) = std::env::var("COCOCAT_REPO_ROOT") {
-        return PathBuf::from(root);
-    }
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../..")
-        .canonicalize()
-        .unwrap_or_else(|_| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../.."))
+    runtime_layout::app_root()
 }
 
 fn read_token_from(path: &Path) -> Option<String> {
@@ -35,12 +30,15 @@ fn extended_path() -> String {
         format!("{}/.local/bin", home.display()),
         format!("{}/.local/share/cococat/bin", home.display()),
         format!("{}/.local/share/pnpm", home.display()),
-        format!("{}/node_modules/.bin", repo.display()),
         "/opt/homebrew/bin".into(),
         "/usr/local/bin".into(),
         "/usr/bin".into(),
         "/bin".into(),
     ];
+    for dir in runtime_layout::node_modules_bin_dirs() {
+        parts.insert(0, dir.to_string_lossy().to_string());
+    }
+    parts.insert(0, format!("{}/node_modules/.bin", repo.display()));
     if let Ok(entries) = std::fs::read_dir(home.join(".nvm/versions/node")) {
         for entry in entries.flatten() {
             let bin = entry.path().join("bin");
@@ -53,10 +51,6 @@ fn extended_path() -> String {
         }
     }
     parts.join(":")
-}
-
-pub(crate) fn monorepo_root() -> PathBuf {
-    repo_root()
 }
 
 pub(crate) fn node_path_env() -> String {
