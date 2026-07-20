@@ -6,6 +6,7 @@
   "type": "module",
   "scripts": {
     "migrate": "bash scripts/cococat-migrate-config.sh",
+    "repo:check": "bash scripts/check-repo-clean.sh",
     "stack": "bash scripts/cococat-stack.sh",
     "stack:status": "bash scripts/cococat-stack.sh status all",
     "build": "turbo run build",

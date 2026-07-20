@@ -7,6 +7,7 @@ on:
       - 'apps/**'
       - 'docs/**'
       - 'scripts/**'
+      - 'README.md'
       - 'docker/**'
       - 'docker-compose.yml'
       - 'pnpm-lock.yaml'
@@ -17,6 +18,14 @@ on:
       - '.github/workflows/ci.yml'
 
 jobs:
+  repository-hygiene:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reject tracked dependencies and generated files
+        run: bash scripts/check-repo-clean.sh
+
   changes:
     runs-on: ubuntu-latest
     outputs:
